@@ -138,3 +138,25 @@ See `docs/publishing-checklist.md` before publishing.
 ## License
 
 Apache-2.0. See `LICENSE` and `NOTICE`.
+
+
+## macOS Touch ID helper build
+
+On macOS, `build.rs` compiles `platform/macos/auth-macos-touchid.swift` into Cargo's `OUT_DIR` and embeds that helper path into the Rust binary. The runtime lookup order is:
+
+1. `AUTH_MACOS_TOUCHID_HELPER` environment variable
+2. helper compiled by `build.rs`
+3. helper installed beside the `auth` executable
+4. `auth-macos-touchid` found on `PATH`
+
+For development and CI, use `--no-platform-auth` to avoid an interactive biometric/PAM/Hello prompt.
+
+## Integration tests
+
+Run:
+
+```bash
+cargo test --all-targets --all-features
+```
+
+The CLI integration tests cover help/version output, writing authorization for two files, checking authorized/unauthorized/missing files, removing one authorization record, and detecting content changes.

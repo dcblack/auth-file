@@ -412,14 +412,37 @@ mod platform {
 
     #[cfg(target_os = "macos")]
     pub fn authorize(reason: &str) -> Result<(), AuthError> {
+        use std::path::PathBuf;
+        use std::process::Command;
+
         // No GUI is built by auth itself. This invokes a tiny Swift helper that uses
         // LocalAuthentication and lets macOS present Touch ID / password fallback.
-        // Install it as `auth-macos-touchid` somewhere on PATH.
-        let status = std::process::Command::new("auth-macos-touchid")
+        // Search order:
+        //   1. AUTH_MACOS_TOUCHID_HELPER runtime override
+        //   2. helper compiled by build.rs into OUT_DIR
+        //   3. helper installed beside the auth executable
+        //   4. helper on PATH
+        let helper = std::env::var_os("AUTH_MACOS_TOUCHID_HELPER")
+            .map(PathBuf::from)
+            .or_else(|| {
+                let built = env!("AUTH_BUILT_MACOS_HELPER");
+                (!built.is_empty()).then(|| PathBuf::from(built))
+            })
+            .filter(|p| p.exists())
+            .or_else(|| {
+                std::env::current_exe()
+                    .ok()
+                    .and_then(|p| p.parent().map(|dir| dir.join("auth-macos-touchid")))
+                    .filter(|p| p.exists())
+            })
+            .unwrap_or_else(|| PathBuf::from("auth-macos-touchid"));
+
+        let status = Command::new(&helper)
             .arg(reason)
             .status()
             .map_err(|e| AuthError::UnsupportedAuthorization(format!(
-                "could not invoke auth-macos-touchid helper: {e}. Build platform/macos/auth-macos-touchid.swift or use --no-platform-auth for development"
+                "could not invoke auth-macos-touchid helper at {}: {e}. Use --no-platform-auth for development/CI or set AUTH_MACOS_TOUCHID_HELPER.",
+                helper.display()
             )))?;
         if status.success() {
             Ok(())

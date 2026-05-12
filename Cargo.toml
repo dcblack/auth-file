@@ -1,6 +1,6 @@
 [package]
 name = "auth-file"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 authors = ["David Black <dcblack@mac.com>"]
 rust-version = "1.78"
@@ -12,7 +12,7 @@ documentation = "https://docs.rs/auth-file"
 readme = "README.md"
 keywords = ["auth", "cli", "security", "signature", "validation"]
 categories = ["command-line-utilities", "authentication", "cryptography"]
-include = ["src/**", "tests/**", "platform/**", "docs/**", "Cargo.toml", "README.md", "LICENSE", "NOTICE", "SECURITY.md", "CONTRIBUTING.md", "deny.toml"]
+include = ["src/**", "tests/**", "platform/**", "docs/**", "build.rs", "Cargo.toml", "README.md", "LICENSE", "NOTICE", "SECURITY.md", "CONTRIBUTING.md", "deny.toml"]
 
 [lib]
 name = "authlib"
