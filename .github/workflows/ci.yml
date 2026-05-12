@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  test:
+    name: test / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2025]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Format check
+        run: cargo fmt --check
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: Tests
+        run: cargo test --all-features
+
+  security:
+    name: audit and sbom
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install security tools
+        run: cargo install cargo-audit cargo-cyclonedx cargo-deny
+      - name: RustSec audit
+        run: cargo audit
+      - name: Dependency policy check
+        run: cargo deny check advisories bans licenses sources
+      - name: Generate CycloneDX SBOM
+        run: cargo cyclonedx --format json --output-file sbom.cdx.json
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-cyclonedx-json
+          path: sbom.cdx.json
