@@ -1,3 +1,8 @@
+#![forbid(unsafe_code)]
+#![deny(warnings)]
+#![deny(clippy::all)]
+#![warn(clippy::pedantic)]
+
 use authlib::{auth_report, ActionType, AuthOptions, AuthorizationMode, VERSION};
 use std::env;
 use std::path::PathBuf;
@@ -59,7 +64,7 @@ fn main() -> ExitCode {
 }
 
 fn run() -> Result<bool, String> {
-    let mut args: Vec<String> = env::args().skip(1).collect();
+    let args: Vec<String> = env::args().skip(1).collect();
     if args.is_empty() {
         println!("{HELP}");
         return Ok(true);

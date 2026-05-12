@@ -1,3 +1,8 @@
+#![forbid(unsafe_code)]
+#![deny(warnings)]
+#![deny(clippy::all)]
+#![warn(clippy::pedantic)]
+
 //! `authlib` - file authorization and validation library.
 //!
 //! The crate intentionally separates authorization from validation:
