@@ -1,38 +1,13 @@
-# Rust
 /target/
 /.auth/
 /auth-test-db/
 *.swp
-# macOS
 .DS_Store
-.AppleDouble
-.LSOverride
--alias
-
-# Windows
-Thumbs.db
-ehthumbs.db
-Desktop.ini
-
-# Logs
-*.log
-
-# Environment
-.env
-
-# IDEs
 .idea/
 .vscode/
 *.cdx.json
 
-# Database
-
-# SBOM
-sbom/
-
-# Miscellaneous
-ARCHIVE/
-DEV/
-SANDBOX/
-NOTES/
-.snap/
+/auth-test/
+*.db
+*.db-wal
+*.db-shm

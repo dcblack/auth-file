@@ -1,6 +1,6 @@
 ---
 title: auth platform support
-version: 0.3.0
+version: 0.6.0
 agent: ChatGPT 5.5
 created: 2026-05-12T16:55:00-05:00
 ---
@@ -30,3 +30,10 @@ auth --force --write file.txt
 ```
 
 `--force` bypasses platform authorization for database-changing actions and should not be used as the normal human authorization path.
+
+
+## Key storage beginning in v0.7.0
+
+Normal-use signing and path-HMAC secrets are provisioned automatically when a new database is initialized. No separate user setup command is required. The platform credential store is used through the `keyring` crate.
+
+Test-only databases named `auth-test` keep local file-backed test keys so automated tests can run without touching the user's real credential store.

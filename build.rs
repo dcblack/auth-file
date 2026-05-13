@@ -30,7 +30,10 @@ fn main() {
 
     match status {
         Ok(status) if status.success() => {
-            println!("cargo:rustc-env=AUTH_BUILT_MACOS_HELPER={}", helper.display());
+            println!(
+                "cargo:rustc-env=AUTH_BUILT_MACOS_HELPER={}",
+                helper.display()
+            );
         }
         Ok(status) => {
             panic!(

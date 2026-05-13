@@ -1,6 +1,6 @@
 ---
 title: auth crates.io publishing checklist
-version: 0.3.0
+version: 0.6.0
 agent: ChatGPT 5.5
 created: 2026-05-12T16:55:00-05:00
 ---

@@ -1,6 +1,6 @@
 [package]
 name = "auth-file"
-version = "0.4.0"
+version = "0.7.0"
 edition = "2021"
 authors = ["David Black <dcblack@mac.com>"]
 rust-version = "1.78"
@@ -12,7 +12,7 @@ documentation = "https://docs.rs/auth-file"
 readme = "README.md"
 keywords = ["auth", "cli", "security", "signature", "validation"]
 categories = ["command-line-utilities", "authentication", "cryptography"]
-include = ["src/**", "tests/**", "platform/**", "docs/**", "build.rs", "Cargo.toml", "README.md", "LICENSE", "NOTICE", "SECURITY.md", "CONTRIBUTING.md", "deny.toml"]
+include = ["src/**", "tests/**", "platform/**", "docs/**", "build.rs", "Cargo.toml", "README.md", "LICENSE", "NOTICE", "SECURITY.md", "CONTRIBUTING.md", "CHANGELOG.md", "deny.toml"]
 
 [lib]
 name = "authlib"
@@ -29,9 +29,11 @@ hmac = "0.12"
 rand_core = { version = "0.6", features = ["getrandom"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+rusqlite = { version = "0.32", features = ["bundled"] }
 sha2 = "0.10"
 thiserror = "1.0"
 dirs = "5.0"
+keyring = "2.3"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = ["Security_Credentials_UI", "Foundation"] }
