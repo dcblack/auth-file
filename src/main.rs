@@ -114,7 +114,7 @@ fn run() -> Result<bool, String> {
             return;
         }
         let batch = std::mem::take(files);
-        match auth_report(action, batch, &options.clone()) {
+        match auth_report(action, batch, options) {
             Ok(report) => *overall_ok &= report.ok(),
             Err(e) => {
                 if options.verbose >= 0 {

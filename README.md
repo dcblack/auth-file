@@ -74,7 +74,7 @@ Simple shell-friendly wrapper:
 pub fn auth(
     action: ActionType,
     file_list: Vec<String>,
-    options: AuthOptions,
+    options: &AuthOptions,
 ) -> bool;
 ```
 
@@ -84,7 +84,7 @@ Detailed API:
 pub fn auth_report(
     action: ActionType,
     file_list: Vec<String>,
-    options: AuthOptions,
+    options: &AuthOptions,
 ) -> Result<AuthReport, AuthError>;
 ```
 

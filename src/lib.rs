@@ -4,7 +4,7 @@
 //! - `Write` and `Remove` may require user authorization.
 //! - `Check` verifies stored cryptographic records without prompting.
 //!
-//! Version 0.7.0 stores authorization records in `SQLite` and moves normal-use
+//! Version 0.7.1 stores authorization records in `SQLite` and moves normal-use
 //! secret keys into the platform credential store. Test databases named
 //! `auth-test` keep file-backed keys for CI and development only.
 
@@ -208,6 +208,7 @@ pub fn auth_report(
     file_list: Vec<String>,
     options: &AuthOptions,
 ) -> Result<AuthReport, AuthError> {
+    let database_was_missing = !database_path(&options.db_dir).exists();
     ensure_storage(&options.db_dir)?;
     if matches!(action, ActionType::Write | ActionType::Remove)
         && options.authorization == AuthorizationMode::Platform
@@ -215,9 +216,10 @@ pub fn auth_report(
         platform_authorize(&options.reason)?;
     }
 
-    let mut report = AuthReport::default();
-    let keys = DbKeys::load_or_create(&options.db_dir)?;
     let conn = open_database(&options.db_dir)?;
+    let allow_key_create = database_was_missing || records_table_is_empty(&conn)?;
+    let mut report = AuthReport::default();
+    let keys = DbKeys::load_or_create(&options.db_dir, allow_key_create)?;
 
     for file in file_list {
         let path = PathBuf::from(&file);
@@ -314,19 +316,19 @@ struct DbKeys {
 }
 
 impl DbKeys {
-    fn load_or_create(db_dir: &Path) -> Result<Self, AuthError> {
+    fn load_or_create(db_dir: &Path, allow_create: bool) -> Result<Self, AuthError> {
         if is_test_database_dir(db_dir) {
-            return Self::load_or_create_test_files(db_dir);
+            return Self::load_or_create_test_files(db_dir, allow_create);
         }
-        Self::load_or_create_keyring(db_dir)
+        Self::load_or_create_keyring(db_dir, allow_create)
     }
 
-    fn load_or_create_keyring(db_dir: &Path) -> Result<Self, AuthError> {
+    fn load_or_create_keyring(db_dir: &Path, allow_create: bool) -> Result<Self, AuthError> {
         let namespace = key_namespace(db_dir);
         let signing_name = format!("{namespace}:ed25519-signing");
         let path_name = format!("{namespace}:path-hmac");
 
-        let signing_bytes = get_or_create_secret(&signing_name, || {
+        let signing_bytes = get_or_create_secret(&signing_name, allow_create, || {
             SigningKey::generate(&mut OsRng).to_bytes().to_vec()
         })?;
         let signing_array: [u8; 32] = signing_bytes
@@ -337,7 +339,7 @@ impl DbKeys {
 
         write_public_file(&db_dir.join(PUBKEY_FILE), verifying.to_bytes().as_slice())?;
 
-        let path_hmac_secret = get_or_create_secret(&path_name, || {
+        let path_hmac_secret = get_or_create_secret(&path_name, allow_create, || {
             let mut key = vec![0_u8; 32];
             OsRng.fill_bytes(&mut key);
             key
@@ -350,7 +352,7 @@ impl DbKeys {
         })
     }
 
-    fn load_or_create_test_files(db_dir: &Path) -> Result<Self, AuthError> {
+    fn load_or_create_test_files(db_dir: &Path, allow_create: bool) -> Result<Self, AuthError> {
         let signing_path = db_dir.join(TEST_KEYPAIR_FILE);
         let verifying_path = db_dir.join(PUBKEY_FILE);
         let path_key_path = db_dir.join(TEST_PATH_KEY_FILE);
@@ -359,10 +361,15 @@ impl DbKeys {
             let bytes = fs::read(&signing_path)?;
             let arr: [u8; 32] = bytes.try_into().map_err(|_| AuthError::InvalidSigningKey)?;
             SigningKey::from_bytes(&arr)
-        } else {
+        } else if allow_create {
             let key = SigningKey::generate(&mut OsRng);
             write_secret_file(&signing_path, key.to_bytes().as_slice())?;
             key
+        } else {
+            return Err(AuthError::KeyStorage(format!(
+                "database exists but test signing key is missing: {}",
+                signing_path.display()
+            )));
         };
 
         let verifying = signing.verifying_key();
@@ -370,11 +377,16 @@ impl DbKeys {
 
         let path_hmac_secret = if path_key_path.exists() {
             fs::read(&path_key_path)?
-        } else {
+        } else if allow_create {
             let mut key = vec![0_u8; 32];
             OsRng.fill_bytes(&mut key);
             write_secret_file(&path_key_path, &key)?;
             key
+        } else {
+            return Err(AuthError::KeyStorage(format!(
+                "database exists but test path HMAC key is missing: {}",
+                path_key_path.display()
+            )));
         };
 
         Ok(Self {
@@ -593,6 +605,7 @@ fn hex_lower(bytes: impl AsRef<[u8]>) -> String {
 
 fn get_or_create_secret(
     name: &str,
+    allow_create: bool,
     generate: impl FnOnce() -> Vec<u8>,
 ) -> Result<Vec<u8>, AuthError> {
     let entry = keyring::Entry::new(KEYRING_SERVICE, name)
@@ -601,14 +614,16 @@ fn get_or_create_secret(
     if let Ok(secret) = entry.get_password() {
         B64.decode(secret.as_bytes())
             .map_err(|e| AuthError::KeyDecode(e.to_string()))
-    } else {
+    } else if allow_create {
         let secret = generate();
-
         entry
             .set_password(&B64.encode(&secret))
             .map_err(|e| AuthError::KeyStorage(e.to_string()))?;
-
         Ok(secret)
+    } else {
+        Err(AuthError::KeyStorage(format!(
+            "database exists but credential-store secret is missing: {name}"
+        )))
     }
 }
 
@@ -687,6 +702,11 @@ fn initialize_schema(conn: &Connection) -> Result<(), AuthError> {
 
 fn database_path(db_dir: &Path) -> PathBuf {
     db_dir.join(SQLITE_FILE)
+}
+
+fn records_table_is_empty(conn: &Connection) -> Result<bool, AuthError> {
+    let count: i64 = conn.query_row("SELECT COUNT(*) FROM records", [], |row| row.get(0))?;
+    Ok(count == 0)
 }
 
 fn write_secret_file(path: &Path, bytes: &[u8]) -> Result<(), AuthError> {
@@ -972,5 +992,108 @@ mod tests {
         .unwrap();
         assert!(!ck.ok());
         assert_eq!(ck.failed, 1);
+    }
+
+    #[test]
+    fn first_run_bootstrap_creates_database_and_test_keys() {
+        let tmp = tempdir().unwrap();
+        let db = tmp.path().join("auth-test");
+        let file = tmp.path().join("bootstrap.txt");
+        fs::write(&file, "bootstrap contents\n").unwrap();
+
+        assert!(!db.exists());
+
+        let wr = auth_report(
+            ActionType::Write,
+            vec![file.to_string_lossy().into_owned()],
+            &test_options(&db),
+        )
+        .unwrap();
+
+        assert!(wr.ok());
+        assert!(db.join(SQLITE_FILE).exists());
+        assert!(db.join(TEST_KEYPAIR_FILE).exists());
+        assert!(db.join(TEST_PATH_KEY_FILE).exists());
+        assert!(db.join(PUBKEY_FILE).exists());
+    }
+
+    #[test]
+    fn existing_database_reuses_test_keys() {
+        let tmp = tempdir().unwrap();
+        let db = tmp.path().join("auth-test");
+        let file = tmp.path().join("reuse.txt");
+        fs::write(&file, "stable contents\n").unwrap();
+
+        auth_report(
+            ActionType::Write,
+            vec![file.to_string_lossy().into_owned()],
+            &test_options(&db),
+        )
+        .unwrap();
+
+        let signing_before = fs::read(db.join(TEST_KEYPAIR_FILE)).unwrap();
+        let path_key_before = fs::read(db.join(TEST_PATH_KEY_FILE)).unwrap();
+
+        let ck = auth_report(
+            ActionType::Check,
+            vec![file.to_string_lossy().into_owned()],
+            &test_options(&db),
+        )
+        .unwrap();
+
+        assert!(ck.ok());
+        assert_eq!(
+            signing_before,
+            fs::read(db.join(TEST_KEYPAIR_FILE)).unwrap()
+        );
+        assert_eq!(
+            path_key_before,
+            fs::read(db.join(TEST_PATH_KEY_FILE)).unwrap()
+        );
+    }
+
+    #[test]
+    fn corrupted_database_returns_error() {
+        let tmp = tempdir().unwrap();
+        let db = tmp.path().join("auth-test");
+        fs::create_dir_all(&db).unwrap();
+        fs::write(db.join(SQLITE_FILE), "not a sqlite database\n").unwrap();
+        let file = tmp.path().join("corrupt.txt");
+        fs::write(&file, "contents\n").unwrap();
+
+        let err = auth_report(
+            ActionType::Check,
+            vec![file.to_string_lossy().into_owned()],
+            &test_options(&db),
+        )
+        .unwrap_err();
+
+        assert!(matches!(err, AuthError::Sqlite(_)));
+    }
+
+    #[test]
+    fn existing_database_missing_test_key_fails_instead_of_recreating() {
+        let tmp = tempdir().unwrap();
+        let db = tmp.path().join("auth-test");
+        let file = tmp.path().join("missing-key.txt");
+        fs::write(&file, "contents\n").unwrap();
+
+        auth_report(
+            ActionType::Write,
+            vec![file.to_string_lossy().into_owned()],
+            &test_options(&db),
+        )
+        .unwrap();
+
+        fs::remove_file(db.join(TEST_PATH_KEY_FILE)).unwrap();
+
+        let err = auth_report(
+            ActionType::Check,
+            vec![file.to_string_lossy().into_owned()],
+            &test_options(&db),
+        )
+        .unwrap_err();
+
+        assert!(matches!(err, AuthError::KeyStorage(_)));
     }
 }
