@@ -660,10 +660,22 @@ fn is_readable_file(path: &Path) -> bool {
 
 fn ensure_storage(db_dir: &Path) -> Result<(), AuthError> {
     fs::create_dir_all(db_dir)?;
+
+    #[cfg(unix)]
     set_private_dir_permissions(db_dir)?;
+
+    #[cfg(not(unix))]
+    set_private_dir_permissions(db_dir);
+
     let conn = open_database(db_dir)?;
     initialize_schema(&conn)?;
+
+    #[cfg(unix)]
     set_private_file_permissions(&database_path(db_dir))?;
+
+    #[cfg(not(unix))]
+    set_private_file_permissions(&database_path(db_dir));
+
     Ok(())
 }
 
@@ -715,7 +727,13 @@ fn write_secret_file(path: &Path, bytes: &[u8]) -> Result<(), AuthError> {
         .write(true)
         .open(path)?;
     file.write_all(bytes)?;
+
+    #[cfg(unix)]
     set_private_file_permissions(path)?;
+
+    #[cfg(not(unix))]
+    set_private_file_permissions(path);
+
     Ok(())
 }
 
@@ -726,37 +744,43 @@ fn write_public_file(path: &Path, bytes: &[u8]) -> Result<(), AuthError> {
         .write(true)
         .open(path)?;
     file.write_all(bytes)?;
+
+    #[cfg(unix)]
     set_private_file_permissions(path)?;
+
+    #[cfg(not(unix))]
+    set_private_file_permissions(path);
+
     Ok(())
 }
 
+#[cfg(unix)]
 fn set_private_dir_permissions(path: &Path) -> Result<(), AuthError> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
-    }
-    #[cfg(windows)]
-    {
-        let _ = path;
-    }
+    use std::os::unix::fs::PermissionsExt;
+
+    let mut permissions = std::fs::metadata(path)?.permissions();
+    permissions.set_mode(0o700);
+    std::fs::set_permissions(path, permissions)?;
+
     Ok(())
 }
 
+#[cfg(not(unix))]
+fn set_private_dir_permissions(_path: &Path) {}
+
+#[cfg(unix)]
 fn set_private_file_permissions(path: &Path) -> Result<(), AuthError> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        if path.exists() {
-            fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
-        }
-    }
-    #[cfg(windows)]
-    {
-        let _ = path;
-    }
+    use std::os::unix::fs::PermissionsExt;
+
+    let mut permissions = std::fs::metadata(path)?.permissions();
+    permissions.set_mode(0o600);
+    std::fs::set_permissions(path, permissions)?;
+
     Ok(())
 }
+
+#[cfg(not(unix))]
+fn set_private_file_permissions(_path: &Path) {}
 
 fn unix_now() -> u64 {
     SystemTime::now()
