@@ -206,7 +206,8 @@ fn split_auth_options(input: &str) -> Result<Vec<String>, String> {
                     out.push(std::mem::take(&mut current));
                 }
             }
-            (_, '\\') => {
+            (None, '\\') => current.push(ch),
+            (Some(_), '\\') => {
                 if let Some(next) = chars.next() {
                     current.push(next);
                 } else {
