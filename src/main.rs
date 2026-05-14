@@ -3,7 +3,7 @@
 #![deny(clippy::all)]
 #![warn(clippy::pedantic)]
 
-use authlib::{auth_report, ActionType, AuthOptions, AuthorizationMode, ColorMode, VERSION};
+use authlib::{auth_report, change_fallback_password, ActionType, AuthOptions, ColorMode, VERSION};
 use std::env;
 use std::io::{self, IsTerminal, Write};
 use std::path::PathBuf;
@@ -118,10 +118,10 @@ fn handle_top_level_command(args: &[String]) -> bool {
 struct CliState {
     action: ActionType,
     options: AuthOptions,
-    no_platform_auth_requested: bool,
     dir_explicit: bool,
     overall_ok: bool,
     current_files: Vec<String>,
+    change_password_requested: bool,
 }
 
 impl Default for CliState {
@@ -129,10 +129,10 @@ impl Default for CliState {
         Self {
             action: ActionType::Check,
             options: AuthOptions::default(),
-            no_platform_auth_requested: false,
             dir_explicit: false,
             overall_ok: true,
             current_files: Vec::new(),
+            change_password_requested: false,
         }
     }
 }
@@ -158,10 +158,6 @@ fn parse_one_arg(args: &[String], i: &mut usize, state: &mut CliState) -> Result
         "-q" | "--quiet" => state.options.verbose = 0,
         "-s" | "--silent" => state.options.verbose = -1,
         "-f" | "--force" => state.options.force = true,
-        "--no-platform-auth" => {
-            state.options.authorization = AuthorizationMode::None;
-            state.no_platform_auth_requested = true;
-        }
         "--color" => {
             *i += 1;
             let mode = args
@@ -176,6 +172,9 @@ fn parse_one_arg(args: &[String], i: &mut usize, state: &mut CliState) -> Result
                 .ok_or_else(|| "missing directory after --dir".to_string())?;
             state.options.db_dir = PathBuf::from(dir);
             state.dir_explicit = true;
+        }
+        "--change-password" => {
+            state.change_password_requested = true;
         }
         "--help" | "-h" => return Err("--help must be the first option".to_string()),
         "--version" => return Err("--version must be the first option".to_string()),
@@ -192,17 +191,26 @@ fn switch_action(state: &mut CliState, action: ActionType) {
 }
 
 fn finalize_cli_state(state: &mut CliState) -> Result<bool, String> {
-    if state.no_platform_auth_requested {
-        validate_no_platform_auth_dir(&state.options.db_dir, state.dir_explicit)?;
+    if state.change_password_requested {
+        if !state.current_files.is_empty() {
+            return Err("--change-password cannot be mixed with file operands".to_string());
+        }
 
-        if state.options.verbose >= 0 {
-            eprintln!(
+        let burners = change_fallback_password(&state.options).map_err(|e| e.to_string())?;
+
+        eprintln!(
                 "{}",
                 state.options.colorize_warning(
-                    "Warning: --no-platform-auth is in effect; authorization prompts are disabled for this test database."
+                    "Save these one-time burner passwords in a password manager. They will not be shown again."
                 )
             );
+        eprintln!("Database: {}", state.options.db_dir.display());
+
+        for burner in burners {
+            eprintln!("  {burner}");
         }
+
+        return Ok(true);
     }
 
     flush_current_files(state);
@@ -280,28 +288,6 @@ fn parse_color_mode(value: &str) -> Result<ColorMode, String> {
             "invalid --color value {other}; expected auto, always, or never"
         )),
     }
-}
-
-fn validate_no_platform_auth_dir(
-    db_dir: &std::path::Path,
-    dir_explicit: bool,
-) -> Result<(), String> {
-    if !dir_explicit {
-        return Err(
-            "--no-platform-auth requires an explicit --dir/-d option whose basename is auth-test"
-                .to_string(),
-        );
-    }
-    let basename = db_dir.file_name().and_then(|s| s.to_str()).ok_or_else(|| {
-        "--no-platform-auth requires a database directory basename of auth-test".to_string()
-    })?;
-    if basename != "auth-test" {
-        return Err(format!(
-            "--no-platform-auth requires --dir/-d to name a directory ending in auth-test, got {}",
-            db_dir.display()
-        ));
-    }
-    Ok(())
 }
 
 fn print_help() {
