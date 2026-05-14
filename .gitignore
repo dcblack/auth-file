@@ -11,3 +11,16 @@
 *.db
 *.db-wal
 *.db-shm
+
+# Windows
+thumbs.db
+
+# Special
+ARCHIVE/
+DEV/
+NOTES/
+bin/
+sbom/
+git.log
+
+# Taf!

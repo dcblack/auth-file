@@ -4,8 +4,10 @@
 //! - `Write` and `Remove` may require user authorization.
 //! - `Check` verifies stored cryptographic records without prompting.
 //!
-//! Version 0.7.1 stores authorization records in `SQLite` and moves normal-use
-//! secret keys into the platform credential store. Test databases named
+//! Version 0.8.0 stores authorization records in `SQLite` and moves normal-use
+//! secret keys into the platform credential store. Version 0.8.0 adds an
+//! Argon2id-protected fallback password and one-time burner passwords for
+//! recovery when platform authorization is unavailable. Test databases named
 //! `auth-test` keep file-backed keys for CI and development only.
 
 #![forbid(unsafe_code)]
@@ -13,13 +15,17 @@
 #![deny(clippy::all)]
 #![warn(clippy::pedantic)]
 
+use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
+use argon2::Argon2;
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine;
+use chacha20poly1305::aead::{Aead, KeyInit};
+use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use hmac::{Hmac, Mac};
 use rand_core::{OsRng, RngCore};
 use rusqlite::{params, Connection, OptionalExtension};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::{self, IsTerminal, Read, Write};
@@ -28,6 +34,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 
 type HmacSha256 = Hmac<Sha256>;
+type EncryptedKeyBundleParts = (Vec<u8>, Vec<u8>, Vec<u8>);
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 const TEST_KEYPAIR_FILE: &str = "ed25519.signing-key";
@@ -35,7 +42,12 @@ const TEST_PATH_KEY_FILE: &str = "path-hmac.key";
 const PUBKEY_FILE: &str = "ed25519.verifying-key";
 const KEYRING_SERVICE: &str = "auth-file";
 const SQLITE_FILE: &str = "auth.db";
-const SCHEMA_VERSION: i32 = 2;
+const SCHEMA_VERSION: i32 = 3;
+const PASSWORD_MIN_LEN: usize = 14;
+const PASSWORD_MAX_LEN: usize = 80;
+const PASSWORD_MIN_BITS: f64 = 90.0;
+const BURNER_COUNT: usize = 10;
+const BURNER_LEN: usize = 16;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActionType {
@@ -57,7 +69,7 @@ impl ColorMode {
             Self::Always => true,
             Self::Never => false,
             Self::Auto => {
-                std::io::stderr().is_terminal()
+                io::stderr().is_terminal()
                     && std::env::var_os("NO_COLOR").is_none()
                     && std::env::var_os("NOCOLOR").is_none()
             }
@@ -156,6 +168,14 @@ pub enum AuthError {
     KeyDecode(String),
     #[error("authorization denied: {0}")]
     AuthorizationDenied(String),
+    #[error("fallback password is not configured for this database")]
+    PasswordNotConfigured,
+    #[error("fallback password is not strong enough: {0}")]
+    WeakPassword(String),
+    #[error("password verification failed")]
+    PasswordVerificationFailed,
+    #[error("recovery data is invalid or unavailable: {0}")]
+    Recovery(String),
     #[error("unsupported platform authorization: {0}")]
     UnsupportedAuthorization(String),
     #[error("file is not readable: {0}")]
@@ -189,6 +209,12 @@ struct SignedPayload<'a> {
     size: u64,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+struct KeyBundle {
+    signing_key_b64: String,
+    path_hmac_secret_b64: String,
+}
+
 /// Shell-friendly wrapper requested in the design notes.
 #[must_use]
 pub fn auth(action: ActionType, file_list: Vec<String>, options: &AuthOptions) -> bool {
@@ -210,16 +236,21 @@ pub fn auth_report(
 ) -> Result<AuthReport, AuthError> {
     let database_was_missing = !database_path(&options.db_dir).exists();
     ensure_storage(&options.db_dir)?;
+    let conn = open_database(&options.db_dir)?;
+
     if matches!(action, ActionType::Write | ActionType::Remove)
         && options.authorization == AuthorizationMode::Platform
     {
-        platform_authorize(&options.reason)?;
+        if let Err(platform_error) = platform_authorize(&options.reason) {
+            eprintln!("Warning: platform authorization unavailable or denied: {platform_error}");
+            authenticate_with_fallback_password(&conn)?;
+        }
     }
 
-    let conn = open_database(&options.db_dir)?;
     let allow_key_create = database_was_missing || records_table_is_empty(&conn)?;
     let mut report = AuthReport::default();
-    let keys = DbKeys::load_or_create(&options.db_dir, allow_key_create)?;
+    let keys = DbKeys::load_or_create(&options.db_dir, &conn, allow_key_create)?;
+    ensure_recovery_initialized(&conn, &options.db_dir, &keys)?;
 
     for file in file_list {
         let path = PathBuf::from(&file);
@@ -316,21 +347,41 @@ struct DbKeys {
 }
 
 impl DbKeys {
-    fn load_or_create(db_dir: &Path, allow_create: bool) -> Result<Self, AuthError> {
+    fn load_or_create(
+        db_dir: &Path,
+        conn: &Connection,
+        allow_create: bool,
+    ) -> Result<Self, AuthError> {
         if is_test_database_dir(db_dir) {
             return Self::load_or_create_test_files(db_dir, allow_create);
         }
-        Self::load_or_create_keyring(db_dir, allow_create)
+        Self::load_or_create_keyring(db_dir, conn, allow_create)
     }
 
-    fn load_or_create_keyring(db_dir: &Path, allow_create: bool) -> Result<Self, AuthError> {
+    fn load_or_create_keyring(
+        db_dir: &Path,
+        conn: &Connection,
+        allow_create: bool,
+    ) -> Result<Self, AuthError> {
         let namespace = key_namespace(db_dir);
         let signing_name = format!("{namespace}:ed25519-signing");
         let path_name = format!("{namespace}:path-hmac");
 
-        let signing_bytes = get_or_create_secret(&signing_name, allow_create, || {
+        let signing_bytes = match get_or_create_secret(&signing_name, allow_create, || {
             SigningKey::generate(&mut OsRng).to_bytes().to_vec()
-        })?;
+        }) {
+            Ok(bytes) => bytes,
+            Err(e) if !allow_create => {
+                restore_keyring_from_recovery(conn, &signing_name, &path_name)
+                    .map_err(|restore_error| {
+                        AuthError::KeyStorage(format!(
+                            "{e}; password recovery also failed: {restore_error}"
+                        ))
+                    })?
+                    .0
+            }
+            Err(e) => return Err(e),
+        };
         let signing_array: [u8; 32] = signing_bytes
             .try_into()
             .map_err(|_| AuthError::InvalidSigningKey)?;
@@ -395,6 +446,22 @@ impl DbKeys {
             path_hmac_secret,
         })
     }
+}
+
+/// Change the fallback password after authenticating with the current fallback
+/// password or one unused burner password.
+///
+/// # Errors
+///
+/// Returns an error if the database cannot be opened, recovery is not
+/// configured, authentication fails, or the new password does not meet the
+/// local strength policy.
+pub fn change_fallback_password(options: &AuthOptions) -> Result<Vec<String>, AuthError> {
+    ensure_storage(&options.db_dir)?;
+    let conn = open_database(&options.db_dir)?;
+    let keys = DbKeys::load_or_create(&options.db_dir, &conn, false)?;
+    authenticate_with_fallback_or_burner(&conn)?;
+    configure_recovery_password(&conn, &options.db_dir, &keys, true)
 }
 
 fn write_record(conn: &Connection, path: &Path, keys: &DbKeys) -> Result<(), AuthError> {
@@ -571,7 +638,7 @@ fn load_record(conn: &Connection, path_hmac: &str) -> Result<Option<AuthRecord>,
 }
 
 fn path_hmac(path: &Path, key: &[u8]) -> String {
-    let Ok(mut mac) = HmacSha256::new_from_slice(key) else {
+    let Ok(mut mac) = <HmacSha256 as KeyInit>::new_from_slice(key) else {
         unreachable!("HMAC accepts arbitrary key sizes");
     };
     mac.update(path.to_string_lossy().as_bytes());
@@ -601,6 +668,349 @@ fn hex_lower(bytes: impl AsRef<[u8]>) -> String {
         out.push(char::from(HEX[usize::from(byte & 0x0f)]));
     }
     out
+}
+
+fn recovery_is_configured(conn: &Connection) -> Result<bool, AuthError> {
+    let count: i64 = conn.query_row("SELECT COUNT(*) FROM recovery WHERE id = 1", [], |row| {
+        row.get(0)
+    })?;
+    Ok(count > 0)
+}
+
+fn ensure_recovery_initialized(
+    conn: &Connection,
+    db_dir: &Path,
+    keys: &DbKeys,
+) -> Result<(), AuthError> {
+    if is_test_database_dir(db_dir) || recovery_is_configured(conn)? || !io::stdin().is_terminal() {
+        return Ok(());
+    }
+    eprintln!(
+        "Fallback password setup is required for this new auth database: {}",
+        absolute_database_dir(db_dir).display()
+    );
+    let burners = configure_recovery_password(conn, db_dir, keys, false)?;
+    display_burner_passwords(db_dir, &burners);
+    Ok(())
+}
+
+fn configure_recovery_password(
+    conn: &Connection,
+    _db_dir: &Path,
+    keys: &DbKeys,
+    changing_existing: bool,
+) -> Result<Vec<String>, AuthError> {
+    let prompt = if changing_existing {
+        "New fallback password: "
+    } else {
+        "Fallback password: "
+    };
+    let password = prompt_new_password(prompt)?;
+    let password_hash = hash_password(&password)?;
+    let burners = generate_burner_passwords();
+    let key_bundle = KeyBundle {
+        signing_key_b64: B64.encode(keys.signing.to_bytes()),
+        path_hmac_secret_b64: B64.encode(&keys.path_hmac_secret),
+    };
+    let (salt, nonce, ciphertext) = encrypt_key_bundle(&password, &key_bundle)?;
+    conn.execute(
+        "INSERT INTO recovery (
+            id,
+            password_hash,
+            kdf_salt_b64,
+            key_backup_nonce_b64,
+            key_backup_ciphertext_b64,
+            machine_id_hash,
+            updated_unix
+        ) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6)
+        ON CONFLICT(id) DO UPDATE SET
+            password_hash = excluded.password_hash,
+            kdf_salt_b64 = excluded.kdf_salt_b64,
+            key_backup_nonce_b64 = excluded.key_backup_nonce_b64,
+            key_backup_ciphertext_b64 = excluded.key_backup_ciphertext_b64,
+            machine_id_hash = excluded.machine_id_hash,
+            updated_unix = excluded.updated_unix",
+        params![
+            password_hash,
+            B64.encode(&salt),
+            B64.encode(nonce),
+            B64.encode(ciphertext),
+            current_machine_hash(),
+            i64::try_from(unix_now()).unwrap_or(i64::MAX),
+        ],
+    )?;
+    conn.execute("DELETE FROM burner_passwords", [])?;
+    for burner in &burners {
+        conn.execute(
+            "INSERT INTO burner_passwords (password_hash, created_unix, used_unix)
+             VALUES (?1, ?2, NULL)",
+            params![
+                hash_password(burner)?,
+                i64::try_from(unix_now()).unwrap_or(i64::MAX),
+            ],
+        )?;
+    }
+    Ok(burners)
+}
+
+fn authenticate_with_fallback_password(conn: &Connection) -> Result<(), AuthError> {
+    if !recovery_is_configured(conn)? {
+        return Err(AuthError::PasswordNotConfigured);
+    }
+    let password = rpassword::prompt_password("Fallback password: ")?;
+    if verify_fallback_password(conn, &password)? {
+        Ok(())
+    } else {
+        Err(AuthError::PasswordVerificationFailed)
+    }
+}
+
+fn authenticate_with_fallback_or_burner(conn: &Connection) -> Result<(), AuthError> {
+    if !recovery_is_configured(conn)? {
+        return Err(AuthError::PasswordNotConfigured);
+    }
+    let password = rpassword::prompt_password("Current fallback password or burner password: ")?;
+    if verify_fallback_password(conn, &password)? || verify_and_burn_burner(conn, &password)? {
+        Ok(())
+    } else {
+        Err(AuthError::PasswordVerificationFailed)
+    }
+}
+
+fn verify_fallback_password(conn: &Connection, password: &str) -> Result<bool, AuthError> {
+    let hash: String = conn.query_row(
+        "SELECT password_hash FROM recovery WHERE id = 1",
+        [],
+        |row| row.get(0),
+    )?;
+    verify_password_hash(password, &hash)
+}
+
+fn verify_and_burn_burner(conn: &Connection, password: &str) -> Result<bool, AuthError> {
+    let mut stmt = conn.prepare(
+        "SELECT id, password_hash FROM burner_passwords WHERE used_unix IS NULL ORDER BY id",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+    })?;
+    for row in rows {
+        let (id, hash) = row?;
+        if verify_password_hash(password, &hash)? {
+            conn.execute(
+                "UPDATE burner_passwords SET used_unix = ?1 WHERE id = ?2",
+                params![i64::try_from(unix_now()).unwrap_or(i64::MAX), id],
+            )?;
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn restore_keyring_from_recovery(
+    conn: &Connection,
+    signing_name: &str,
+    path_name: &str,
+) -> Result<(Vec<u8>, Vec<u8>), AuthError> {
+    authenticate_with_fallback_password(conn)?;
+    let password = rpassword::prompt_password("Fallback password again to restore keys: ")?;
+    let bundle = decrypt_key_bundle(conn, &password)?;
+    let signing = B64
+        .decode(bundle.signing_key_b64.as_bytes())
+        .map_err(|e| AuthError::KeyDecode(e.to_string()))?;
+    let path_hmac = B64
+        .decode(bundle.path_hmac_secret_b64.as_bytes())
+        .map_err(|e| AuthError::KeyDecode(e.to_string()))?;
+    store_secret(signing_name, &signing)?;
+    store_secret(path_name, &path_hmac)?;
+    if machine_hash_from_database(conn)? != current_machine_hash() {
+        eprintln!(
+            "Warning: this database appears to be on a different machine. Run `auth --change-password --dir <database-dir>` to create a fresh fallback password and burner set."
+        );
+    }
+    Ok((signing, path_hmac))
+}
+
+fn machine_hash_from_database(conn: &Connection) -> Result<String, AuthError> {
+    conn.query_row(
+        "SELECT machine_id_hash FROM recovery WHERE id = 1",
+        [],
+        |row| row.get(0),
+    )
+    .map_err(AuthError::from)
+}
+
+fn decrypt_key_bundle(conn: &Connection, password: &str) -> Result<KeyBundle, AuthError> {
+    let (salt_b64, nonce_b64, ciphertext_b64): (String, String, String) = conn.query_row(
+        "SELECT kdf_salt_b64, key_backup_nonce_b64, key_backup_ciphertext_b64 FROM recovery WHERE id = 1",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )?;
+    let salt = B64
+        .decode(salt_b64.as_bytes())
+        .map_err(|e| AuthError::KeyDecode(e.to_string()))?;
+    let nonce = B64
+        .decode(nonce_b64.as_bytes())
+        .map_err(|e| AuthError::KeyDecode(e.to_string()))?;
+    let ciphertext = B64
+        .decode(ciphertext_b64.as_bytes())
+        .map_err(|e| AuthError::KeyDecode(e.to_string()))?;
+    let key = derive_encryption_key(password, &salt)?;
+    let cipher =
+        XChaCha20Poly1305::new_from_slice(&key).map_err(|e| AuthError::Recovery(e.to_string()))?;
+    let nonce = XNonce::from_slice(&nonce);
+    let plaintext = cipher
+        .decrypt(nonce, ciphertext.as_ref())
+        .map_err(|_| AuthError::PasswordVerificationFailed)?;
+    serde_json::from_slice(&plaintext).map_err(AuthError::from)
+}
+
+fn encrypt_key_bundle(
+    password: &str,
+    bundle: &KeyBundle,
+) -> Result<EncryptedKeyBundleParts, AuthError> {
+    let mut salt = vec![0_u8; 16];
+    OsRng.fill_bytes(&mut salt);
+    let mut nonce = vec![0_u8; 24];
+    OsRng.fill_bytes(&mut nonce);
+    let key = derive_encryption_key(password, &salt)?;
+    let cipher =
+        XChaCha20Poly1305::new_from_slice(&key).map_err(|e| AuthError::Recovery(e.to_string()))?;
+    let plaintext = serde_json::to_vec(bundle)?;
+    let ciphertext = cipher
+        .encrypt(XNonce::from_slice(&nonce), plaintext.as_ref())
+        .map_err(|e| AuthError::Recovery(e.to_string()))?;
+    Ok((salt, nonce, ciphertext))
+}
+
+fn derive_encryption_key(password: &str, salt: &[u8]) -> Result<[u8; 32], AuthError> {
+    let mut key = [0_u8; 32];
+    Argon2::default()
+        .hash_password_into(password.as_bytes(), salt, &mut key)
+        .map_err(|e| AuthError::Recovery(e.to_string()))?;
+    Ok(key)
+}
+
+fn prompt_new_password(prompt: &str) -> Result<String, AuthError> {
+    loop {
+        let first = rpassword::prompt_password(prompt)?;
+        validate_password_strength(&first)?;
+        let second = rpassword::prompt_password("Confirm fallback password: ")?;
+        if first == second {
+            return Ok(first);
+        }
+        eprintln!("Passwords did not match. Try again.");
+    }
+}
+
+fn validate_password_strength(password: &str) -> Result<(), AuthError> {
+    let len = password.chars().count();
+    if !(PASSWORD_MIN_LEN..=PASSWORD_MAX_LEN).contains(&len) {
+        return Err(AuthError::WeakPassword(format!(
+            "must be {PASSWORD_MIN_LEN}-{PASSWORD_MAX_LEN} characters"
+        )));
+    }
+    let bits = estimated_password_bits(password);
+    if bits < PASSWORD_MIN_BITS {
+        return Err(AuthError::WeakPassword(format!(
+            "estimated at {bits:.1} bits; require at least {PASSWORD_MIN_BITS:.0} bits"
+        )));
+    }
+    Ok(())
+}
+
+#[allow(clippy::cast_precision_loss)]
+fn estimated_password_bits(password: &str) -> f64 {
+    let mut pool: f64 = 0.0;
+    if password.chars().any(|c| c.is_ascii_lowercase()) {
+        pool += 26.0;
+    }
+    if password.chars().any(|c| c.is_ascii_uppercase()) {
+        pool += 26.0;
+    }
+    if password.chars().any(|c| c.is_ascii_digit()) {
+        pool += 10.0;
+    }
+    if password.chars().any(|c| c.is_ascii_punctuation()) {
+        pool += 33.0;
+    }
+    if !password.is_ascii() {
+        pool += 64.0;
+    }
+    if pool <= 1.0 {
+        0.0
+    } else {
+        password.chars().count() as f64 * pool.log2()
+    }
+}
+
+fn hash_password(password: &str) -> Result<String, AuthError> {
+    let salt = SaltString::generate(&mut OsRng);
+    Argon2::default()
+        .hash_password(password.as_bytes(), &salt)
+        .map(|hash| hash.to_string())
+        .map_err(|e| AuthError::Recovery(e.to_string()))
+}
+
+fn verify_password_hash(password: &str, hash: &str) -> Result<bool, AuthError> {
+    let parsed = PasswordHash::new(hash).map_err(|e| AuthError::Recovery(e.to_string()))?;
+    Ok(Argon2::default()
+        .verify_password(password.as_bytes(), &parsed)
+        .is_ok())
+}
+
+fn generate_burner_passwords() -> Vec<String> {
+    (0..BURNER_COUNT)
+        .map(|_| random_alphanumeric(BURNER_LEN))
+        .collect()
+}
+
+fn random_alphanumeric(len: usize) -> String {
+    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    let mut out = String::with_capacity(len);
+    for _ in 0..len {
+        let mut byte = [0_u8; 1];
+        OsRng.fill_bytes(&mut byte);
+        let idx = usize::from(byte[0]) % ALPHABET.len();
+        out.push(char::from(ALPHABET[idx]));
+    }
+    out
+}
+
+fn display_burner_passwords(db_dir: &Path, burners: &[String]) {
+    eprintln!("\nSave this information in a password manager.");
+    eprintln!("Database: {}", absolute_database_dir(db_dir).display());
+    eprintln!("Fallback password: [the password you just entered]");
+    eprintln!("One-time burner passwords for fallback password changes:");
+    for burner in burners {
+        eprintln!("  {burner}");
+    }
+    eprintln!("These burners are not recoverable after this display.\n");
+}
+
+fn current_machine_hash() -> String {
+    let mut material = String::new();
+    for key in ["COMPUTERNAME", "HOSTNAME", "USERDOMAIN", "USERNAME", "USER"] {
+        if let Ok(value) = std::env::var(key) {
+            material.push_str(key);
+            material.push('=');
+            material.push_str(&value);
+            material.push('\n');
+        }
+    }
+    if material.is_empty() {
+        material = absolute_database_dir(Path::new("."))
+            .to_string_lossy()
+            .into_owned();
+    }
+    hex_lower(Sha256::digest(material.as_bytes()))
+}
+
+fn store_secret(name: &str, secret: &[u8]) -> Result<(), AuthError> {
+    let entry = keyring::Entry::new(KEYRING_SERVICE, name)
+        .map_err(|e| AuthError::KeyStorage(e.to_string()))?;
+    entry
+        .set_password(&B64.encode(secret))
+        .map_err(|e| AuthError::KeyStorage(e.to_string()))
 }
 
 fn get_or_create_secret(
@@ -706,6 +1116,23 @@ fn initialize_schema(conn: &Connection) -> Result<(), AuthError> {
 
         CREATE INDEX IF NOT EXISTS idx_records_path_hmac
             ON records(path_hmac_sha256);
+
+        CREATE TABLE IF NOT EXISTS recovery (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            password_hash TEXT NOT NULL,
+            kdf_salt_b64 TEXT NOT NULL,
+            key_backup_nonce_b64 TEXT NOT NULL,
+            key_backup_ciphertext_b64 TEXT NOT NULL,
+            machine_id_hash TEXT NOT NULL,
+            updated_unix INTEGER NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS burner_passwords (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            password_hash TEXT NOT NULL,
+            created_unix INTEGER NOT NULL,
+            used_unix INTEGER
+        );
         ",
     )?;
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
@@ -758,9 +1185,9 @@ fn write_public_file(path: &Path, bytes: &[u8]) -> Result<(), AuthError> {
 fn set_private_dir_permissions(path: &Path) -> Result<(), AuthError> {
     use std::os::unix::fs::PermissionsExt;
 
-    let mut permissions = std::fs::metadata(path)?.permissions();
+    let mut permissions = fs::metadata(path)?.permissions();
     permissions.set_mode(0o700);
-    std::fs::set_permissions(path, permissions)?;
+    fs::set_permissions(path, permissions)?;
 
     Ok(())
 }
@@ -772,9 +1199,9 @@ fn set_private_dir_permissions(_path: &Path) {}
 fn set_private_file_permissions(path: &Path) -> Result<(), AuthError> {
     use std::os::unix::fs::PermissionsExt;
 
-    let mut permissions = std::fs::metadata(path)?.permissions();
+    let mut permissions = fs::metadata(path)?.permissions();
     permissions.set_mode(0o600);
-    std::fs::set_permissions(path, permissions)?;
+    fs::set_permissions(path, permissions)?;
 
     Ok(())
 }

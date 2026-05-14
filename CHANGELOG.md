@@ -64,3 +64,24 @@ The format is based on Keep a Changelog, and this project aims to follow Semanti
 
 - Build-script support for the macOS Touch ID helper.
 - Integration tests for help, write, check, missing file, and remove flows.
+
+## [0.8.0] - 2026-05-13
+
+### Added
+
+- Added fallback password support for normal databases using Argon2id password hashes.
+- Added encrypted key backup using an Argon2id-derived key and XChaCha20-Poly1305.
+- Added one-time burner passwords for changing the fallback password if the current fallback password is unavailable.
+- Added `--change-password` to rotate the fallback password and generate a new burner set.
+- Added machine-binding metadata to detect database use on a different machine.
+
+### Changed
+
+- New normal databases now attempt to initialize fallback recovery material after key creation.
+- If platform authorization is unavailable, write/remove operations can fall back to the stored fallback password when recovery is configured.
+
+### Security Notes
+
+- Fallback recovery data is intended to recover access to the database keys when platform authorization or local credential-store access is unavailable.
+- The machine-binding check is advisory; it helps detect unexpected database movement but is not equivalent to hardware attestation.
+- Burner passwords are displayed only once and are not recoverable.

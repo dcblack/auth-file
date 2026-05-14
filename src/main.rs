@@ -22,6 +22,7 @@ Synopsis
   auth --write  [OPTIONS] FILENAME(S)
   auth --check  [OPTIONS] FILENAME(S)
   auth --remove [OPTIONS] FILENAME(S)
+  auth --change-password [OPTIONS]
 
 Options
 -------
@@ -32,6 +33,7 @@ Options
   --check, -ck               Verify specified files are valid
   --write, -wr               Authorize files; requires platform authorization unless disabled
   --remove, -rm              Remove authorization; requires platform authorization unless disabled
+  --change-password           Change fallback password using current password or burner
   --verbose, -v              Increase verbosity
   --quiet, -q                Report failures only
   --silent, -s               Silent even with failure, useful in scripts
@@ -86,102 +88,145 @@ fn main() -> ExitCode {
 
 fn run() -> Result<bool, String> {
     let args = collect_args()?;
+
+    if handle_top_level_command(&args) {
+        return Ok(true);
+    }
+
+    execute_args(&args)
+}
+
+fn handle_top_level_command(args: &[String]) -> bool {
     if args.is_empty() {
         print_help();
-        return Ok(true);
+        return true;
     }
+
     if args[0] == "--help" || args[0] == "-h" {
         print_help();
-        return Ok(true);
+        return true;
     }
+
     if args[0] == "--version" {
         println!("auth {VERSION}");
-        return Ok(true);
+        return true;
     }
 
-    let mut action = ActionType::Check;
-    let mut options = AuthOptions::default();
-    let mut no_platform_auth_requested = false;
-    let mut dir_explicit = false;
-    let mut overall_ok = true;
-    let mut current_files: Vec<String> = Vec::new();
+    false
+}
 
-    let flush = |action: ActionType,
-                 files: &mut Vec<String>,
-                 options: &AuthOptions,
-                 overall_ok: &mut bool| {
-        if files.is_empty() {
-            return;
+struct CliState {
+    action: ActionType,
+    options: AuthOptions,
+    no_platform_auth_requested: bool,
+    dir_explicit: bool,
+    overall_ok: bool,
+    current_files: Vec<String>,
+}
+
+impl Default for CliState {
+    fn default() -> Self {
+        Self {
+            action: ActionType::Check,
+            options: AuthOptions::default(),
+            no_platform_auth_requested: false,
+            dir_explicit: false,
+            overall_ok: true,
+            current_files: Vec::new(),
         }
-        let batch = std::mem::take(files);
-        match auth_report(action, batch, options) {
-            Ok(report) => *overall_ok &= report.ok(),
-            Err(e) => {
-                if options.verbose >= 0 {
-                    eprintln!("{}", options.colorize_error(&format!("Error: {e}")));
-                }
-                *overall_ok = false;
-            }
-        }
-    };
+    }
+}
+
+fn execute_args(args: &[String]) -> Result<bool, String> {
+    let mut state = CliState::default();
 
     let mut i = 0;
     while i < args.len() {
-        match args[i].as_str() {
-            "-ck" | "--check" => {
-                flush(action, &mut current_files, &options, &mut overall_ok);
-                action = ActionType::Check;
-            }
-            "-wr" | "--write" => {
-                flush(action, &mut current_files, &options, &mut overall_ok);
-                action = ActionType::Write;
-            }
-            "-rm" | "--remove" => {
-                flush(action, &mut current_files, &options, &mut overall_ok);
-                action = ActionType::Remove;
-            }
-            "-v" | "--verbose" => options.verbose = 1,
-            "-q" | "--quiet" => options.verbose = 0,
-            "-s" | "--silent" => options.verbose = -1,
-            "-f" | "--force" => options.force = true,
-            "--no-platform-auth" => {
-                options.authorization = AuthorizationMode::None;
-                no_platform_auth_requested = true;
-            }
-            "--color" => {
-                i += 1;
-                let mode = args
-                    .get(i)
-                    .ok_or_else(|| "missing value after --color".to_string())?;
-                options.color = parse_color_mode(mode)?;
-            }
-            "-d" | "--dir" => {
-                i += 1;
-                let dir = args
-                    .get(i)
-                    .ok_or_else(|| "missing directory after --dir".to_string())?;
-                options.db_dir = PathBuf::from(dir);
-                dir_explicit = true;
-            }
-            "--help" | "-h" => return Err("--help must be the first option".to_string()),
-            "--version" => return Err("--version must be the first option".to_string()),
-            unknown if unknown.starts_with('-') => return Err(format!("unknown option {unknown}")),
-            filename => current_files.push(filename.to_string()),
-        }
+        parse_one_arg(args, &mut i, &mut state)?;
         i += 1;
     }
 
-    if no_platform_auth_requested {
-        validate_no_platform_auth_dir(&options.db_dir, dir_explicit)?;
-        if options.verbose >= 0 {
-            eprintln!("{}", options.colorize_warning("Warning: --no-platform-auth is in effect; authorization prompts are disabled for this test database."));
+    finalize_cli_state(&mut state)
+}
+
+fn parse_one_arg(args: &[String], i: &mut usize, state: &mut CliState) -> Result<(), String> {
+    match args[*i].as_str() {
+        "-ck" | "--check" => switch_action(state, ActionType::Check),
+        "-wr" | "--write" => switch_action(state, ActionType::Write),
+        "-rm" | "--remove" => switch_action(state, ActionType::Remove),
+        "-v" | "--verbose" => state.options.verbose = 1,
+        "-q" | "--quiet" => state.options.verbose = 0,
+        "-s" | "--silent" => state.options.verbose = -1,
+        "-f" | "--force" => state.options.force = true,
+        "--no-platform-auth" => {
+            state.options.authorization = AuthorizationMode::None;
+            state.no_platform_auth_requested = true;
+        }
+        "--color" => {
+            *i += 1;
+            let mode = args
+                .get(*i)
+                .ok_or_else(|| "missing value after --color".to_string())?;
+            state.options.color = parse_color_mode(mode)?;
+        }
+        "-d" | "--dir" => {
+            *i += 1;
+            let dir = args
+                .get(*i)
+                .ok_or_else(|| "missing directory after --dir".to_string())?;
+            state.options.db_dir = PathBuf::from(dir);
+            state.dir_explicit = true;
+        }
+        "--help" | "-h" => return Err("--help must be the first option".to_string()),
+        "--version" => return Err("--version must be the first option".to_string()),
+        unknown if unknown.starts_with('-') => return Err(format!("unknown option {unknown}")),
+        filename => state.current_files.push(filename.to_string()),
+    }
+
+    Ok(())
+}
+
+fn switch_action(state: &mut CliState, action: ActionType) {
+    flush_current_files(state);
+    state.action = action;
+}
+
+fn finalize_cli_state(state: &mut CliState) -> Result<bool, String> {
+    if state.no_platform_auth_requested {
+        validate_no_platform_auth_dir(&state.options.db_dir, state.dir_explicit)?;
+
+        if state.options.verbose >= 0 {
+            eprintln!(
+                "{}",
+                state.options.colorize_warning(
+                    "Warning: --no-platform-auth is in effect; authorization prompts are disabled for this test database."
+                )
+            );
         }
     }
 
-    flush(action, &mut current_files, &options, &mut overall_ok);
-    Ok(overall_ok)
+    flush_current_files(state);
+    Ok(state.overall_ok)
 }
 
+fn flush_current_files(state: &mut CliState) {
+    if state.current_files.is_empty() {
+        return;
+    }
+
+    let batch = std::mem::take(&mut state.current_files);
+
+    match auth_report(state.action, batch, &state.options) {
+        Ok(report) => state.overall_ok &= report.ok(),
+        Err(e) => {
+            if state.options.verbose >= 0 {
+                eprintln!("{}", state.options.colorize_error(&format!("Error: {e}")));
+            }
+
+            state.overall_ok = false;
+        }
+    }
+}
 fn collect_args() -> Result<Vec<String>, String> {
     let mut args = Vec::new();
     if let Ok(extra) = env::var("AUTH_OPTIONS") {
@@ -206,8 +251,7 @@ fn split_auth_options(input: &str) -> Result<Vec<String>, String> {
                     out.push(std::mem::take(&mut current));
                 }
             }
-            (None, '\\') => current.push(ch),
-            (Some(_), '\\') => {
+            (_, '\\') => {
                 if let Some(next) = chars.next() {
                     current.push(next);
                 } else {

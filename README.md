@@ -10,6 +10,18 @@ Version: `0.7.0`
 
 This is a development implementation intended for review and platform testing.
 
+## Fallback password recovery
+
+Normal databases can establish a fallback password and ten one-time burner passwords. The fallback password is stored as an Argon2id password hash. A backup copy of the database key material is encrypted with a key derived from the fallback password. Burner passwords are intended only for changing the fallback password. Store the fallback password, burners, and full database path in a password manager.
+
+Use:
+
+```bash
+auth --change-password --dir ~/.auth
+```
+
+The recovery metadata includes an advisory machine identifier. If the database is copied to a different machine, the fallback password may be required to restore the keys into that machine’s credential store.
+
 ## Security model
 
 `auth` separates two ideas:

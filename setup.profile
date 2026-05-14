@@ -20,6 +20,18 @@ function Realpath()
   /usr/bin/env perl '-MCwd(abs_path)' -le "${PERLSCRIPT}" "$*"
 }
 
+function Header()
+{
+  if builtin command -v header >/dev/null 2>&1; then
+    header "$@"
+  else
+    while [[ "$1" =~ ^- ]]; do shift; done
+    local text
+    text="$(tr '[:lower:]' '[:upper:]' <<<"$*")"
+    printf "[1;96m%s[0m\n" "${text}"
+  fi
+}
+
 function Project_setup()
 {
   export ACTION SETUP_PATH ENTRY_DIR
@@ -39,9 +51,9 @@ function Project_setup()
       Prepend_path PATH "${PROJECT_DIR}/bin"
       Unique_path PATH
       if [[ -n "${GIT_WORK_DIR}" ]]; then
-        header -Color -hbar=- "${GIT_WORK_DIR/*\/}"
+        Header -uc -Color -hbar=- "${GIT_WORK_DIR/*\/}"
       else
-        header -Color -hbar=- "${ENTRY_DIR/*\/}"
+        Header -uc -Color -hbar=- "${ENTRY_DIR/*\/}"
       fi
       Report_info -ylw "${ENTRY_DIR}"
       echo "$1: ${PROJECT_NAME} environment set up"
