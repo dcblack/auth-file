@@ -4,8 +4,8 @@
 //! - `Write` and `Remove` may require user authorization.
 //! - `Check` verifies stored cryptographic records without prompting.
 //!
-//! Version 0.8.0 stores authorization records in `SQLite` and moves normal-use
-//! secret keys into the platform credential store. Version 0.8.0 adds an
+//! Version 0.8.1 stores authorization records in `SQLite` and moves normal-use
+//! secret keys into the platform credential store. Version 0.8.1 adds an
 //! Argon2id-protected fallback password and one-time burner passwords for
 //! recovery when platform authorization is unavailable. Test databases named
 //! `auth-test` keep file-backed keys for CI and development only.
@@ -69,7 +69,7 @@ impl ColorMode {
             Self::Always => true,
             Self::Never => false,
             Self::Auto => {
-                io::stderr().is_terminal()
+                std::io::stderr().is_terminal()
                     && std::env::var_os("NO_COLOR").is_none()
                     && std::env::var_os("NOCOLOR").is_none()
             }
@@ -237,20 +237,19 @@ pub fn auth_report(
     let database_was_missing = !database_path(&options.db_dir).exists();
     ensure_storage(&options.db_dir)?;
     let conn = open_database(&options.db_dir)?;
+    let allow_key_create = database_was_missing || records_table_is_empty(&conn)?;
+    let mut report = AuthReport::default();
+    let keys = DbKeys::load_or_create(&options.db_dir, &conn, allow_key_create)?;
+    ensure_recovery_initialized(&conn, &options.db_dir, &keys)?;
 
     if matches!(action, ActionType::Write | ActionType::Remove)
         && options.authorization == AuthorizationMode::Platform
     {
         if let Err(platform_error) = platform_authorize(&options.reason) {
             eprintln!("Warning: platform authorization unavailable or denied: {platform_error}");
-            authenticate_with_fallback_password(&conn)?;
+            authenticate_with_fallback_password(&conn, &options.db_dir)?;
         }
     }
-
-    let allow_key_create = database_was_missing || records_table_is_empty(&conn)?;
-    let mut report = AuthReport::default();
-    let keys = DbKeys::load_or_create(&options.db_dir, &conn, allow_key_create)?;
-    ensure_recovery_initialized(&conn, &options.db_dir, &keys)?;
 
     for file in file_list {
         let path = PathBuf::from(&file);
@@ -372,7 +371,7 @@ impl DbKeys {
         }) {
             Ok(bytes) => bytes,
             Err(e) if !allow_create => {
-                restore_keyring_from_recovery(conn, &signing_name, &path_name)
+                restore_keyring_from_recovery(conn, db_dir, &signing_name, &path_name)
                     .map_err(|restore_error| {
                         AuthError::KeyStorage(format!(
                             "{e}; password recovery also failed: {restore_error}"
@@ -460,7 +459,7 @@ pub fn change_fallback_password(options: &AuthOptions) -> Result<Vec<String>, Au
     ensure_storage(&options.db_dir)?;
     let conn = open_database(&options.db_dir)?;
     let keys = DbKeys::load_or_create(&options.db_dir, &conn, false)?;
-    authenticate_with_fallback_or_burner(&conn)?;
+    authenticate_with_fallback_or_burner(&conn, &options.db_dir)?;
     configure_recovery_password(&conn, &options.db_dir, &keys, true)
 }
 
@@ -682,9 +681,23 @@ fn ensure_recovery_initialized(
     db_dir: &Path,
     keys: &DbKeys,
 ) -> Result<(), AuthError> {
-    if is_test_database_dir(db_dir) || recovery_is_configured(conn)? || !io::stdin().is_terminal() {
+    if recovery_is_configured(conn)? {
         return Ok(());
     }
+
+    if let Some((password, confirm)) = test_new_passwords(db_dir) {
+        if password != confirm {
+            return Err(AuthError::PasswordVerificationFailed);
+        }
+        let burners = configure_recovery_password_with_password(conn, db_dir, keys, &password)?;
+        display_burner_passwords(db_dir, &burners);
+        return Ok(());
+    }
+
+    if is_test_database_dir(db_dir) || !io::stdin().is_terminal() {
+        return Ok(());
+    }
+
     eprintln!(
         "Fallback password setup is required for this new auth database: {}",
         absolute_database_dir(db_dir).display()
@@ -696,7 +709,7 @@ fn ensure_recovery_initialized(
 
 fn configure_recovery_password(
     conn: &Connection,
-    _db_dir: &Path,
+    db_dir: &Path,
     keys: &DbKeys,
     changing_existing: bool,
 ) -> Result<Vec<String>, AuthError> {
@@ -705,14 +718,24 @@ fn configure_recovery_password(
     } else {
         "Fallback password: "
     };
-    let password = prompt_new_password(prompt)?;
-    let password_hash = hash_password(&password)?;
+    let password = prompt_new_password(db_dir, prompt)?;
+    configure_recovery_password_with_password(conn, db_dir, keys, &password)
+}
+
+fn configure_recovery_password_with_password(
+    conn: &Connection,
+    _db_dir: &Path,
+    keys: &DbKeys,
+    password: &str,
+) -> Result<Vec<String>, AuthError> {
+    validate_password_strength(password)?;
+    let password_hash = hash_password(password)?;
     let burners = generate_burner_passwords();
     let key_bundle = KeyBundle {
         signing_key_b64: B64.encode(keys.signing.to_bytes()),
         path_hmac_secret_b64: B64.encode(&keys.path_hmac_secret),
     };
-    let (salt, nonce, ciphertext) = encrypt_key_bundle(&password, &key_bundle)?;
+    let (salt, nonce, ciphertext) = encrypt_key_bundle(password, &key_bundle)?;
     conn.execute(
         "INSERT INTO recovery (
             id,
@@ -753,11 +776,11 @@ fn configure_recovery_password(
     Ok(burners)
 }
 
-fn authenticate_with_fallback_password(conn: &Connection) -> Result<(), AuthError> {
+fn authenticate_with_fallback_password(conn: &Connection, db_dir: &Path) -> Result<(), AuthError> {
     if !recovery_is_configured(conn)? {
         return Err(AuthError::PasswordNotConfigured);
     }
-    let password = rpassword::prompt_password("Fallback password: ")?;
+    let password = prompt_existing_password(db_dir, "Fallback password: ")?;
     if verify_fallback_password(conn, &password)? {
         Ok(())
     } else {
@@ -765,11 +788,11 @@ fn authenticate_with_fallback_password(conn: &Connection) -> Result<(), AuthErro
     }
 }
 
-fn authenticate_with_fallback_or_burner(conn: &Connection) -> Result<(), AuthError> {
+fn authenticate_with_fallback_or_burner(conn: &Connection, db_dir: &Path) -> Result<(), AuthError> {
     if !recovery_is_configured(conn)? {
         return Err(AuthError::PasswordNotConfigured);
     }
-    let password = rpassword::prompt_password("Current fallback password or burner password: ")?;
+    let password = prompt_existing_or_burner_password(db_dir)?;
     if verify_fallback_password(conn, &password)? || verify_and_burn_burner(conn, &password)? {
         Ok(())
     } else {
@@ -808,11 +831,12 @@ fn verify_and_burn_burner(conn: &Connection, password: &str) -> Result<bool, Aut
 
 fn restore_keyring_from_recovery(
     conn: &Connection,
+    db_dir: &Path,
     signing_name: &str,
     path_name: &str,
 ) -> Result<(Vec<u8>, Vec<u8>), AuthError> {
-    authenticate_with_fallback_password(conn)?;
-    let password = rpassword::prompt_password("Fallback password again to restore keys: ")?;
+    authenticate_with_fallback_password(conn, db_dir)?;
+    let password = prompt_existing_password(db_dir, "Fallback password again to restore keys: ")?;
     let bundle = decrypt_key_bundle(conn, &password)?;
     let signing = B64
         .decode(bundle.signing_key_b64.as_bytes())
@@ -890,7 +914,15 @@ fn derive_encryption_key(password: &str, salt: &[u8]) -> Result<[u8; 32], AuthEr
     Ok(key)
 }
 
-fn prompt_new_password(prompt: &str) -> Result<String, AuthError> {
+fn prompt_new_password(db_dir: &Path, prompt: &str) -> Result<String, AuthError> {
+    if let Some((password, confirm)) = test_new_passwords(db_dir) {
+        validate_password_strength(&password)?;
+        if password == confirm {
+            return Ok(password);
+        }
+        return Err(AuthError::PasswordVerificationFailed);
+    }
+
     loop {
         let first = rpassword::prompt_password(prompt)?;
         validate_password_strength(&first)?;
@@ -900,6 +932,44 @@ fn prompt_new_password(prompt: &str) -> Result<String, AuthError> {
         }
         eprintln!("Passwords did not match. Try again.");
     }
+}
+
+fn prompt_existing_password(db_dir: &Path, prompt: &str) -> Result<String, AuthError> {
+    if let Some(password) = test_existing_password(db_dir) {
+        return Ok(password);
+    }
+    rpassword::prompt_password(prompt).map_err(AuthError::from)
+}
+
+fn prompt_existing_or_burner_password(db_dir: &Path) -> Result<String, AuthError> {
+    if let Some(password) = test_existing_or_burner_password(db_dir) {
+        return Ok(password);
+    }
+    rpassword::prompt_password("Current fallback password or burner password: ")
+        .map_err(AuthError::from)
+}
+
+fn test_new_passwords(db_dir: &Path) -> Option<(String, String)> {
+    if !is_test_database_dir(db_dir) {
+        return None;
+    }
+    let password = std::env::var("AUTH_TEST_FALLBACK_PASSWORD").ok()?;
+    let confirm =
+        std::env::var("AUTH_TEST_FALLBACK_PASSWORD_CONFIRM").unwrap_or_else(|_| password.clone());
+    Some((password, confirm))
+}
+
+fn test_existing_password(db_dir: &Path) -> Option<String> {
+    if !is_test_database_dir(db_dir) {
+        return None;
+    }
+    std::env::var("AUTH_TEST_CURRENT_PASSWORD_OR_BURNER")
+        .or_else(|_| std::env::var("AUTH_TEST_FALLBACK_PASSWORD"))
+        .ok()
+}
+
+fn test_existing_or_burner_password(db_dir: &Path) -> Option<String> {
+    test_existing_password(db_dir)
 }
 
 fn validate_password_strength(password: &str) -> Result<(), AuthError> {
@@ -1185,9 +1255,9 @@ fn write_public_file(path: &Path, bytes: &[u8]) -> Result<(), AuthError> {
 fn set_private_dir_permissions(path: &Path) -> Result<(), AuthError> {
     use std::os::unix::fs::PermissionsExt;
 
-    let mut permissions = fs::metadata(path)?.permissions();
+    let mut permissions = std::fs::metadata(path)?.permissions();
     permissions.set_mode(0o700);
-    fs::set_permissions(path, permissions)?;
+    std::fs::set_permissions(path, permissions)?;
 
     Ok(())
 }
@@ -1199,9 +1269,9 @@ fn set_private_dir_permissions(_path: &Path) {}
 fn set_private_file_permissions(path: &Path) -> Result<(), AuthError> {
     use std::os::unix::fs::PermissionsExt;
 
-    let mut permissions = fs::metadata(path)?.permissions();
+    let mut permissions = std::fs::metadata(path)?.permissions();
     permissions.set_mode(0o600);
-    fs::set_permissions(path, permissions)?;
+    std::fs::set_permissions(path, permissions)?;
 
     Ok(())
 }
@@ -1266,7 +1336,7 @@ mod platform {
             .arg(reason)
             .status()
             .map_err(|e| AuthError::UnsupportedAuthorization(format!(
-                "could not invoke auth-macos-touchid helper at {}: {e}. Use --no-platform-auth for development/CI or set AUTH_MACOS_TOUCHID_HELPER.",
+                "could not invoke auth-macos-touchid helper at {}: {e}. Set AUTH_MACOS_TOUCHID_HELPER or use fallback password authorization.",
                 helper.display()
             )))?;
         if status.success() {

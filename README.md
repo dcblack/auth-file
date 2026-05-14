@@ -74,7 +74,7 @@ CI / non-interactive examples:
 
 ```bash
 mkdir -p auth-test
-auth --no-platform-auth --dir ./auth-test --write important-script.sh
+AUTH_OPTIONS="-d ./auth-test" AUTH_TEST_FALLBACK_PASSWORD="Long-Test-Password-2026!" AUTH_TEST_FALLBACK_PASSWORD_CONFIRM="Long-Test-Password-2026!" AUTH_TEST_CURRENT_PASSWORD_OR_BURNER="Long-Test-Password-2026!" auth --write important-script.sh
 auth --dir ./auth-test --check important-script.sh
 ```
 
@@ -162,7 +162,7 @@ On macOS, `build.rs` compiles `platform/macos/auth-macos-touchid.swift` into Car
 3. helper installed beside the `auth` executable
 4. `auth-macos-touchid` found on `PATH`
 
-For development and CI, use `--no-platform-auth` to avoid an interactive biometric/PAM/Hello prompt.
+For development and CI, use an `auth-test` database plus the test-only `AUTH_TEST_*` password environment variables.
 
 ## Integration tests
 
@@ -177,7 +177,7 @@ The CLI integration tests cover help/version output, writing authorization for t
 
 ## Test-only authorization bypass
 
-`--no-platform-auth` is intentionally restricted. It may only be used when an explicit database directory is supplied with `--dir`/`-d` and that directory basename is exactly `auth-test`. This keeps development and CI workflows convenient without making the production `~/.auth` database easy to modify without platform authorization.
+`--no-platform-auth` has been removed from the CLI. Tests should use an `auth-test` database and the test-only `AUTH_TEST_*` password environment variables instead.
 
 Example:
 
@@ -185,10 +185,13 @@ Example:
 echo "Hello World" > TESTFILE.txt
 mkdir -p auth-test
 export AUTH_OPTIONS="-d ./auth-test"
-auth --no-platform-auth --write TESTFILE.txt
+export AUTH_TEST_FALLBACK_PASSWORD="Long-Test-Password-2026!"
+export AUTH_TEST_FALLBACK_PASSWORD_CONFIRM="Long-Test-Password-2026!"
+export AUTH_TEST_CURRENT_PASSWORD_OR_BURNER="Long-Test-Password-2026!"
+auth --write TESTFILE.txt
 ```
 
-When this mode is active, `auth` emits a warning unless `--silent` is used.
+These `AUTH_TEST_*` variables are honored only for databases whose basename is exactly `auth-test`.
 
 ## AUTH_OPTIONS
 
@@ -238,4 +241,4 @@ Version 0.7.0 is a clean break from the v0.5.0 directory/file record format. It 
 
 Normal-use key material is now stored in the platform credential store using the Rust `keyring` crate. On macOS this maps to Keychain, on Windows to the Windows Credential Manager, and on Linux to a Secret Service-compatible backend when available. Test databases whose directory basename is exactly `auth-test` still use local file-backed keys so CI and development tests remain non-interactive.
 
-The hidden `--no-platform-auth` option remains available only for test databases named `auth-test`; it is intentionally omitted from the user help text.
+The `--no-platform-auth` option has been removed from the CLI; fallback-password recovery replaces that bypass.

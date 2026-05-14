@@ -31,9 +31,9 @@ Options
   --version                  Display version
   --dir DIR, -d DIR          Specify database directory [default: ~/.auth]
   --check, -ck               Verify specified files are valid
-  --write, -wr               Authorize files; requires platform authorization unless disabled
-  --remove, -rm              Remove authorization; requires platform authorization unless disabled
-  --change-password           Change fallback password using current password or burner
+  --write, -wr               Authorize files; requires platform authorization or fallback password
+  --remove, -rm              Remove authorization; requires platform authorization or fallback password
+  --change-password          Change fallback password using current password or burner
   --verbose, -v              Increase verbosity
   --quiet, -q                Report failures only
   --silent, -s               Silent even with failure, useful in scripts
@@ -88,11 +88,9 @@ fn main() -> ExitCode {
 
 fn run() -> Result<bool, String> {
     let args = collect_args()?;
-
     if handle_top_level_command(&args) {
         return Ok(true);
     }
-
     execute_args(&args)
 }
 
@@ -101,24 +99,20 @@ fn handle_top_level_command(args: &[String]) -> bool {
         print_help();
         return true;
     }
-
     if args[0] == "--help" || args[0] == "-h" {
         print_help();
         return true;
     }
-
     if args[0] == "--version" {
         println!("auth {VERSION}");
         return true;
     }
-
     false
 }
 
 struct CliState {
     action: ActionType,
     options: AuthOptions,
-    dir_explicit: bool,
     overall_ok: bool,
     current_files: Vec<String>,
     change_password_requested: bool,
@@ -129,7 +123,6 @@ impl Default for CliState {
         Self {
             action: ActionType::Check,
             options: AuthOptions::default(),
-            dir_explicit: false,
             overall_ok: true,
             current_files: Vec::new(),
             change_password_requested: false,
@@ -139,13 +132,11 @@ impl Default for CliState {
 
 fn execute_args(args: &[String]) -> Result<bool, String> {
     let mut state = CliState::default();
-
     let mut i = 0;
     while i < args.len() {
         parse_one_arg(args, &mut i, &mut state)?;
         i += 1;
     }
-
     finalize_cli_state(&mut state)
 }
 
@@ -154,6 +145,7 @@ fn parse_one_arg(args: &[String], i: &mut usize, state: &mut CliState) -> Result
         "-ck" | "--check" => switch_action(state, ActionType::Check),
         "-wr" | "--write" => switch_action(state, ActionType::Write),
         "-rm" | "--remove" => switch_action(state, ActionType::Remove),
+        "--change-password" => state.change_password_requested = true,
         "-v" | "--verbose" => state.options.verbose = 1,
         "-q" | "--quiet" => state.options.verbose = 0,
         "-s" | "--silent" => state.options.verbose = -1,
@@ -171,17 +163,12 @@ fn parse_one_arg(args: &[String], i: &mut usize, state: &mut CliState) -> Result
                 .get(*i)
                 .ok_or_else(|| "missing directory after --dir".to_string())?;
             state.options.db_dir = PathBuf::from(dir);
-            state.dir_explicit = true;
-        }
-        "--change-password" => {
-            state.change_password_requested = true;
         }
         "--help" | "-h" => return Err("--help must be the first option".to_string()),
         "--version" => return Err("--version must be the first option".to_string()),
         unknown if unknown.starts_with('-') => return Err(format!("unknown option {unknown}")),
         filename => state.current_files.push(filename.to_string()),
     }
-
     Ok(())
 }
 
@@ -195,21 +182,17 @@ fn finalize_cli_state(state: &mut CliState) -> Result<bool, String> {
         if !state.current_files.is_empty() {
             return Err("--change-password cannot be mixed with file operands".to_string());
         }
-
         let burners = change_fallback_password(&state.options).map_err(|e| e.to_string())?;
-
         eprintln!(
-                "{}",
-                state.options.colorize_warning(
-                    "Save these one-time burner passwords in a password manager. They will not be shown again."
-                )
-            );
+            "{}",
+            state.options.colorize_warning(
+                "CRITICAL: Save these one-time burner passwords in a password manager. They will not be shown again."
+            )
+        );
         eprintln!("Database: {}", state.options.db_dir.display());
-
         for burner in burners {
             eprintln!("  {burner}");
         }
-
         return Ok(true);
     }
 
@@ -221,20 +204,18 @@ fn flush_current_files(state: &mut CliState) {
     if state.current_files.is_empty() {
         return;
     }
-
     let batch = std::mem::take(&mut state.current_files);
-
     match auth_report(state.action, batch, &state.options) {
         Ok(report) => state.overall_ok &= report.ok(),
         Err(e) => {
             if state.options.verbose >= 0 {
                 eprintln!("{}", state.options.colorize_error(&format!("Error: {e}")));
             }
-
             state.overall_ok = false;
         }
     }
 }
+
 fn collect_args() -> Result<Vec<String>, String> {
     let mut args = Vec::new();
     if let Ok(extra) = env::var("AUTH_OPTIONS") {
@@ -259,7 +240,8 @@ fn split_auth_options(input: &str) -> Result<Vec<String>, String> {
                     out.push(std::mem::take(&mut current));
                 }
             }
-            (_, '\\') => {
+            (None, '\\') => current.push(ch),
+            (Some(_), '\\') => {
                 if let Some(next) = chars.next() {
                     current.push(next);
                 } else {

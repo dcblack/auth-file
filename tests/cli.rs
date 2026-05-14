@@ -8,9 +8,19 @@ fn path_str(path: &Path) -> &str {
     path.to_str().expect("test paths are valid UTF-8")
 }
 
+const TEST_PASSWORD: &str = "Long-Test-Password-2026!";
+
+fn auth_cmd() -> Command {
+    let mut cmd = Command::cargo_bin("auth").expect("auth binary exists");
+    cmd.env("AUTH_TEST_FALLBACK_PASSWORD", TEST_PASSWORD)
+        .env("AUTH_TEST_FALLBACK_PASSWORD_CONFIRM", TEST_PASSWORD)
+        .env("AUTH_TEST_CURRENT_PASSWORD_OR_BURNER", TEST_PASSWORD);
+    cmd
+}
+
 #[test]
 fn help_option_works() {
-    let mut cmd = Command::cargo_bin("auth").unwrap();
+    let mut cmd = auth_cmd();
     cmd.arg("--help")
         .assert()
         .success()
@@ -21,7 +31,7 @@ fn help_option_works() {
 
 #[test]
 fn version_option_works() {
-    let mut cmd = Command::cargo_bin("auth").unwrap();
+    let mut cmd = auth_cmd();
     cmd.arg("--version")
         .assert()
         .success()
@@ -37,10 +47,8 @@ fn write_authorization_for_two_files() {
     fs::write(&first, "first approved contents\n").unwrap();
     fs::write(&second, "second approved contents\n").unwrap();
 
-    Command::cargo_bin("auth")
-        .unwrap()
+    auth_cmd()
         .args([
-            "--no-platform-auth",
             "--dir",
             path_str(&db),
             "--write",
@@ -69,10 +77,8 @@ fn check_two_authorized_one_unauthorized_and_one_missing_file() {
     fs::write(&second, "second approved contents\n").unwrap();
     fs::write(&third, "not approved\n").unwrap();
 
-    Command::cargo_bin("auth")
-        .unwrap()
+    auth_cmd()
         .args([
-            "--no-platform-auth",
             "--dir",
             path_str(&db),
             "--write",
@@ -82,32 +88,27 @@ fn check_two_authorized_one_unauthorized_and_one_missing_file() {
         .assert()
         .success();
 
-    Command::cargo_bin("auth")
-        .unwrap()
+    auth_cmd()
         .args(["--dir", path_str(&db), "--check", path_str(&first)])
         .assert()
         .success();
 
-    Command::cargo_bin("auth")
-        .unwrap()
+    auth_cmd()
         .args(["--dir", path_str(&db), "--check", path_str(&second)])
         .assert()
         .success();
 
-    Command::cargo_bin("auth")
-        .unwrap()
+    auth_cmd()
         .args(["--dir", path_str(&db), "--check", path_str(&third)])
         .assert()
         .failure();
 
-    Command::cargo_bin("auth")
-        .unwrap()
+    auth_cmd()
         .args(["--dir", path_str(&db), "--check", path_str(&fourth)])
         .assert()
         .failure();
 
-    Command::cargo_bin("auth")
-        .unwrap()
+    auth_cmd()
         .args([
             "--dir",
             path_str(&db),
@@ -130,10 +131,8 @@ fn remove_one_authorized_file_then_check_removed_file_fails() {
     fs::write(&first, "first approved contents\n").unwrap();
     fs::write(&second, "second approved contents\n").unwrap();
 
-    Command::cargo_bin("auth")
-        .unwrap()
+    auth_cmd()
         .args([
-            "--no-platform-auth",
             "--dir",
             path_str(&db),
             "--write",
@@ -143,26 +142,17 @@ fn remove_one_authorized_file_then_check_removed_file_fails() {
         .assert()
         .success();
 
-    Command::cargo_bin("auth")
-        .unwrap()
-        .args([
-            "--no-platform-auth",
-            "--dir",
-            path_str(&db),
-            "--remove",
-            path_str(&first),
-        ])
+    auth_cmd()
+        .args(["--dir", path_str(&db), "--remove", path_str(&first)])
         .assert()
         .success();
 
-    Command::cargo_bin("auth")
-        .unwrap()
+    auth_cmd()
         .args(["--dir", path_str(&db), "--check", path_str(&first)])
         .assert()
         .failure();
 
-    Command::cargo_bin("auth")
-        .unwrap()
+    auth_cmd()
         .args(["--dir", path_str(&db), "--check", path_str(&second)])
         .assert()
         .success();
@@ -175,59 +165,37 @@ fn write_check_and_detect_change() {
     let file = tmp.path().join("data.txt");
     fs::write(&file, "one\n").unwrap();
 
-    Command::cargo_bin("auth")
-        .unwrap()
-        .args([
-            "--no-platform-auth",
-            "--dir",
-            path_str(&db),
-            "--write",
-            path_str(&file),
-        ])
+    auth_cmd()
+        .args(["--dir", path_str(&db), "--write", path_str(&file)])
         .assert()
         .success();
 
-    Command::cargo_bin("auth")
-        .unwrap()
+    auth_cmd()
         .args(["--dir", path_str(&db), "--check", path_str(&file)])
         .assert()
         .success();
 
     fs::write(&file, "two\n").unwrap();
 
-    Command::cargo_bin("auth")
-        .unwrap()
+    auth_cmd()
         .args(["--dir", path_str(&db), "--check", path_str(&file)])
         .assert()
         .failure();
 }
 
 #[test]
-fn no_platform_auth_requires_explicit_auth_test_directory() {
+fn no_platform_auth_is_not_a_cli_option() {
     let tmp = tempdir().unwrap();
-    let db = tmp.path().join("not-auth-test");
     let file = tmp.path().join("file.txt");
     fs::write(&file, "contents\n").unwrap();
 
-    Command::cargo_bin("auth")
-        .unwrap()
+    auth_cmd()
         .args(["--no-platform-auth", "--write", path_str(&file)])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("requires an explicit --dir"));
-
-    Command::cargo_bin("auth")
-        .unwrap()
-        .args([
-            "--no-platform-auth",
-            "--dir",
-            path_str(&db),
-            "--write",
-            path_str(&file),
-        ])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("auth-test"));
+        .stderr(predicate::str::contains(
+            "unknown option --no-platform-auth",
+        ));
 }
 
 #[test]
@@ -238,16 +206,13 @@ fn auth_options_can_supply_test_directory() {
     fs::write(&file, "contents\n").unwrap();
     let auth_options = format!("-d {}", path_str(&db));
 
-    Command::cargo_bin("auth")
-        .unwrap()
+    auth_cmd()
         .env("AUTH_OPTIONS", auth_options)
-        .args(["--no-platform-auth", "--write", path_str(&file)])
+        .args(["--write", path_str(&file)])
         .assert()
-        .success()
-        .stderr(predicate::str::contains("--no-platform-auth is in effect"));
+        .success();
 
-    Command::cargo_bin("auth")
-        .unwrap()
+    auth_cmd()
         .args(["--dir", path_str(&db), "--check", path_str(&file)])
         .assert()
         .success();
@@ -259,8 +224,7 @@ fn color_always_colors_errors_and_no_color_disables_auto() {
     let db = tmp.path().join("auth-test");
     let missing = tmp.path().join("missing.txt");
 
-    Command::cargo_bin("auth")
-        .unwrap()
+    auth_cmd()
         .args([
             "--color",
             "always",
@@ -273,8 +237,7 @@ fn color_always_colors_errors_and_no_color_disables_auto() {
         .failure()
         .stderr(predicate::str::contains("\u{1b}[31mError:"));
 
-    Command::cargo_bin("auth")
-        .unwrap()
+    auth_cmd()
         .env("NO_COLOR", "1")
         .args([
             "--color",

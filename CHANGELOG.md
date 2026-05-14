@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on Keep a Changelog, and this project aims to follow Semantic Versioning.
 
 
+
+## [0.8.1] - 2026-05-13
+
+### Changed
+
+- Removed `--no-platform-auth` from the CLI.
+- Reworked first-run bootstrap so fallback recovery material is initialized before write/remove authorization fallback is needed.
+- CLI integration tests now use the fallback-password mechanism through `auth-test`-only `AUTH_TEST_*` variables.
+
+### Fixed
+
+- Fixed Windows `AUTH_OPTIONS` parsing so backslashes outside quotes remain literal path separators.
+- Kept one-time burner password output visible even when routine CLI output is silent.
+
 ## [0.7.1] - 2026-05-12
 
 ### Added

@@ -19,7 +19,7 @@ created: 2026-05-12T16:55:00-05:00
 CI should use:
 
 ```bash
-auth --no-platform-auth --write file.txt
+auth --write file.txt
 auth --check file.txt
 ```
 
