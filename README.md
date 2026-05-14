@@ -10,9 +10,9 @@ Version: `0.7.0`
 
 This is a development implementation intended for review and platform testing.
 
-## Fallback password recovery
+## Auth password recovery
 
-Normal databases can establish a fallback password and ten one-time burner passwords. The fallback password is stored as an Argon2id password hash. A backup copy of the database key material is encrypted with a key derived from the fallback password. Burner passwords are intended only for changing the fallback password. Store the fallback password, burners, and full database path in a password manager.
+Normal databases can establish a auth password and ten one-time burner passwords. The auth password is stored as an Argon2id password hash. A backup copy of the database key material is encrypted with a key derived from the auth password. Burner passwords are intended only for changing the auth password. Store the auth password, burners, and full database path in a password manager.
 
 Use:
 
@@ -20,7 +20,7 @@ Use:
 auth --change-password --dir ~/.auth
 ```
 
-The recovery metadata includes an advisory machine identifier. If the database is copied to a different machine, the fallback password may be required to restore the keys into that machine’s credential store.
+The recovery metadata includes an advisory machine identifier. If the database is copied to a different machine, the auth password may be required to restore the keys into that machine’s credential store.
 
 ## Security model
 
@@ -242,3 +242,8 @@ Version 0.7.0 is a clean break from the v0.5.0 directory/file record format. It 
 Normal-use key material is now stored in the platform credential store using the Rust `keyring` crate. On macOS this maps to Keychain, on Windows to the Windows Credential Manager, and on Linux to a Secret Service-compatible backend when available. Test databases whose directory basename is exactly `auth-test` still use local file-backed keys so CI and development tests remain non-interactive.
 
 The `--no-platform-auth` option has been removed from the CLI; fallback-password recovery replaces that bypass.
+
+
+### Authorization cache
+
+`--cache-time SECONDS` caches a successful platform/fallback authorization for the selected database for up to 120 seconds. The default is `0`, which disables caching. The cache entry is MAC-protected and tied to the current machine hash and database namespace.

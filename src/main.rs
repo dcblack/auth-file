@@ -31,14 +31,15 @@ Options
   --version                  Display version
   --dir DIR, -d DIR          Specify database directory [default: ~/.auth]
   --check, -ck               Verify specified files are valid
-  --write, -wr               Authorize files; requires platform authorization or fallback password
-  --remove, -rm              Remove authorization; requires platform authorization or fallback password
-  --change-password          Change fallback password using current password or burner
+  --write, -wr               Authorize files; requires platform authorization or auth password
+  --remove, -rm              Remove authorization; requires platform authorization or auth password
+  --change-password          Change auth password using current password or burner
   --verbose, -v              Increase verbosity
   --quiet, -q                Report failures only
   --silent, -s               Silent even with failure, useful in scripts
   --force, -f                Reserved for future non-security confirmation prompts
   --color WHEN               Color output: auto, always, never [default: auto]
+  --cache-time SECONDS       Cache successful authorization for 0-120 seconds [default: 0]
 
 Environment
 -----------
@@ -157,6 +158,13 @@ fn parse_one_arg(args: &[String], i: &mut usize, state: &mut CliState) -> Result
                 .ok_or_else(|| "missing value after --color".to_string())?;
             state.options.color = parse_color_mode(mode)?;
         }
+        "--cache-time" => {
+            *i += 1;
+            let seconds = args
+                .get(*i)
+                .ok_or_else(|| "missing value after --cache-time".to_string())?;
+            state.options.cache_seconds = parse_cache_time(seconds)?;
+        }
         "-d" | "--dir" => {
             *i += 1;
             let dir = args
@@ -259,6 +267,19 @@ fn split_auth_options(input: &str) -> Result<Vec<String>, String> {
         out.push(current);
     }
     Ok(out)
+}
+
+fn parse_cache_time(value: &str) -> Result<u64, String> {
+    let seconds = value
+        .parse::<u64>()
+        .map_err(|_| format!("invalid --cache-time value {value}; expected 0-120"))?;
+    if seconds <= 120 {
+        Ok(seconds)
+    } else {
+        Err(format!(
+            "invalid --cache-time value {seconds}; maximum is 120 seconds"
+        ))
+    }
 }
 
 fn parse_color_mode(value: &str) -> Result<ColorMode, String> {

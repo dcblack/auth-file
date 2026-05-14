@@ -26,7 +26,8 @@ fn help_option_works() {
         .success()
         .stdout(predicate::str::contains("auth --write"))
         .stdout(predicate::str::contains("--version"))
-        .stdout(predicate::str::contains("--no-platform-auth").not());
+        .stdout(predicate::str::contains("--no-platform-auth").not())
+        .stdout(predicate::str::contains("--cache-time"));
 }
 
 #[test]
@@ -216,6 +217,27 @@ fn auth_options_can_supply_test_directory() {
         .args(["--dir", path_str(&db), "--check", path_str(&file)])
         .assert()
         .success();
+}
+
+#[test]
+fn cache_time_rejects_values_over_120_seconds() {
+    let tmp = tempdir().unwrap();
+    let db = tmp.path().join("auth-test");
+    let file = tmp.path().join("cache.txt");
+    fs::write(&file, "contents\n").unwrap();
+
+    auth_cmd()
+        .args([
+            "--dir",
+            path_str(&db),
+            "--cache-time",
+            "121",
+            "--write",
+            path_str(&file),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("maximum is 120 seconds"));
 }
 
 #[test]

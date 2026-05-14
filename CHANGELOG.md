@@ -6,6 +6,29 @@ The format is based on Keep a Changelog, and this project aims to follow Semanti
 
 
 
+## [0.8.3] - 2026-05-14
+
+### Changed
+
+- Changed interactive recovery prompts from “fallback password” wording to “Auth password”.
+- Linux and WSL now skip the incomplete `sudo -v` platform authorization path and use Auth password fallback instead.
+- Platform authorization fallback now reports that Auth password fallback is being used before prompting.
+
+### Fixed
+
+- Burner passwords can now authorize write/remove fallback exactly once, like the normal Auth password.
+
+## [0.8.2] - 2026-05-14
+
+### Added
+
+- Added `--cache-time SECONDS` with a hard CLI limit of 120 seconds.
+- Added a signed short-lived authorization cache in SQLite to reduce repeated platform prompts during scripted write/remove workflows.
+
+### Changed
+
+- Bumped SQLite schema version to 4 for the authorization cache table.
+
 ## [0.8.1] - 2026-05-13
 
 ### Changed
@@ -83,16 +106,16 @@ The format is based on Keep a Changelog, and this project aims to follow Semanti
 
 ### Added
 
-- Added fallback password support for normal databases using Argon2id password hashes.
+- Added auth password support for normal databases using Argon2id password hashes.
 - Added encrypted key backup using an Argon2id-derived key and XChaCha20-Poly1305.
-- Added one-time burner passwords for changing the fallback password if the current fallback password is unavailable.
-- Added `--change-password` to rotate the fallback password and generate a new burner set.
+- Added one-time burner passwords for changing the auth password if the current auth password is unavailable.
+- Added `--change-password` to rotate the auth password and generate a new burner set.
 - Added machine-binding metadata to detect database use on a different machine.
 
 ### Changed
 
 - New normal databases now attempt to initialize fallback recovery material after key creation.
-- If platform authorization is unavailable, write/remove operations can fall back to the stored fallback password when recovery is configured.
+- If platform authorization is unavailable, write/remove operations can fall back to the stored auth password when recovery is configured.
 
 ### Security Notes
 

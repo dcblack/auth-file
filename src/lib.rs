@@ -4,9 +4,9 @@
 //! - `Write` and `Remove` may require user authorization.
 //! - `Check` verifies stored cryptographic records without prompting.
 //!
-//! Version 0.8.1 stores authorization records in `SQLite` and moves normal-use
-//! secret keys into the platform credential store. Version 0.8.1 adds an
-//! Argon2id-protected fallback password and one-time burner passwords for
+//! Version 0.8.3 stores authorization records in `SQLite` and moves normal-use
+//! secret keys into the platform credential store. Version 0.8.3 adds an
+//! Argon2id-protected auth password and one-time burner passwords for
 //! recovery when platform authorization is unavailable. Test databases named
 //! `auth-test` keep file-backed keys for CI and development only.
 
@@ -42,12 +42,13 @@ const TEST_PATH_KEY_FILE: &str = "path-hmac.key";
 const PUBKEY_FILE: &str = "ed25519.verifying-key";
 const KEYRING_SERVICE: &str = "auth-file";
 const SQLITE_FILE: &str = "auth.db";
-const SCHEMA_VERSION: i32 = 3;
+const SCHEMA_VERSION: i32 = 4;
 const PASSWORD_MIN_LEN: usize = 14;
 const PASSWORD_MAX_LEN: usize = 80;
 const PASSWORD_MIN_BITS: f64 = 90.0;
 const BURNER_COUNT: usize = 10;
 const BURNER_LEN: usize = 16;
+const AUTH_CACHE_MAX_SECONDS: u64 = 120;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActionType {
@@ -93,6 +94,7 @@ pub struct AuthOptions {
     pub authorization: AuthorizationMode,
     pub reason: String,
     pub color: ColorMode,
+    pub cache_seconds: u64,
 }
 
 impl Default for AuthOptions {
@@ -104,6 +106,7 @@ impl Default for AuthOptions {
             authorization: AuthorizationMode::Platform,
             reason: "Authorize file trust database change".to_string(),
             color: ColorMode::Auto,
+            cache_seconds: 0,
         }
     }
 }
@@ -168,9 +171,9 @@ pub enum AuthError {
     KeyDecode(String),
     #[error("authorization denied: {0}")]
     AuthorizationDenied(String),
-    #[error("fallback password is not configured for this database")]
+    #[error("auth password is not configured for this database")]
     PasswordNotConfigured,
-    #[error("fallback password is not strong enough: {0}")]
+    #[error("auth password is not strong enough: {0}")]
     WeakPassword(String),
     #[error("password verification failed")]
     PasswordVerificationFailed,
@@ -245,10 +248,7 @@ pub fn auth_report(
     if matches!(action, ActionType::Write | ActionType::Remove)
         && options.authorization == AuthorizationMode::Platform
     {
-        if let Err(platform_error) = platform_authorize(&options.reason) {
-            eprintln!("Warning: platform authorization unavailable or denied: {platform_error}");
-            authenticate_with_fallback_password(&conn, &options.db_dir)?;
-        }
+        authorize_or_use_cache(&conn, &options.db_dir, &keys, options)?;
     }
 
     for file in file_list {
@@ -447,7 +447,7 @@ impl DbKeys {
     }
 }
 
-/// Change the fallback password after authenticating with the current fallback
+/// Change the auth password after authenticating with the current fallback
 /// password or one unused burner password.
 ///
 /// # Errors
@@ -637,10 +637,14 @@ fn load_record(conn: &Connection, path_hmac: &str) -> Result<Option<AuthRecord>,
 }
 
 fn path_hmac(path: &Path, key: &[u8]) -> String {
+    keyed_hmac_hex(key, path.to_string_lossy().as_bytes())
+}
+
+fn keyed_hmac_hex(key: &[u8], material: &[u8]) -> String {
     let Ok(mut mac) = <HmacSha256 as KeyInit>::new_from_slice(key) else {
         unreachable!("HMAC accepts arbitrary key sizes");
     };
-    mac.update(path.to_string_lossy().as_bytes());
+    mac.update(material);
     hex_lower(mac.finalize().into_bytes())
 }
 
@@ -699,7 +703,7 @@ fn ensure_recovery_initialized(
     }
 
     eprintln!(
-        "Fallback password setup is required for this new auth database: {}",
+        "Auth password setup is required for this new auth database: {}",
         absolute_database_dir(db_dir).display()
     );
     let burners = configure_recovery_password(conn, db_dir, keys, false)?;
@@ -714,9 +718,9 @@ fn configure_recovery_password(
     changing_existing: bool,
 ) -> Result<Vec<String>, AuthError> {
     let prompt = if changing_existing {
-        "New fallback password: "
+        "New Auth password: "
     } else {
-        "Fallback password: "
+        "Auth password: "
     };
     let password = prompt_new_password(db_dir, prompt)?;
     configure_recovery_password_with_password(conn, db_dir, keys, &password)
@@ -776,11 +780,111 @@ fn configure_recovery_password_with_password(
     Ok(burners)
 }
 
-fn authenticate_with_fallback_password(conn: &Connection, db_dir: &Path) -> Result<(), AuthError> {
+fn authorize_or_use_cache(
+    conn: &Connection,
+    db_dir: &Path,
+    keys: &DbKeys,
+    options: &AuthOptions,
+) -> Result<(), AuthError> {
+    if options.cache_seconds > 0 && cached_authorization_is_valid(conn, db_dir, keys)? {
+        return Ok(());
+    }
+
+    if let Err(platform_error) = platform_authorize(&options.reason) {
+        eprintln!(
+            "Warning: platform authorization unavailable or denied; using Auth password fallback: {platform_error}"
+        );
+        authenticate_with_auth_password(conn, db_dir)?;
+    }
+
+    cache_successful_authorization(conn, db_dir, keys, options.cache_seconds)
+}
+
+fn cached_authorization_is_valid(
+    conn: &Connection,
+    db_dir: &Path,
+    keys: &DbKeys,
+) -> Result<bool, AuthError> {
+    let row: Option<(i64, String, String)> = conn
+        .query_row(
+            "SELECT authorized_until_unix, machine_id_hash, cache_mac FROM authorization_cache WHERE id = 1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()?;
+    let Some((until_i, machine_hash, cache_mac)) = row else {
+        return Ok(false);
+    };
+    let Some(until) = u64::try_from(until_i).ok() else {
+        return Ok(false);
+    };
+    if unix_now() > until || machine_hash != current_machine_hash() {
+        return Ok(false);
+    }
+    Ok(cache_mac == authorization_cache_mac(db_dir, keys, until, &machine_hash))
+}
+
+fn cache_successful_authorization(
+    conn: &Connection,
+    db_dir: &Path,
+    keys: &DbKeys,
+    requested_seconds: u64,
+) -> Result<(), AuthError> {
+    if requested_seconds == 0 {
+        return Ok(());
+    }
+    let seconds = requested_seconds.min(AUTH_CACHE_MAX_SECONDS);
+    let until = unix_now().saturating_add(seconds);
+    let machine_hash = current_machine_hash();
+    let cache_mac = authorization_cache_mac(db_dir, keys, until, &machine_hash);
+    conn.execute(
+        "INSERT INTO authorization_cache (id, authorized_until_unix, machine_id_hash, cache_mac)
+         VALUES (1, ?1, ?2, ?3)
+         ON CONFLICT(id) DO UPDATE SET
+            authorized_until_unix = excluded.authorized_until_unix,
+            machine_id_hash = excluded.machine_id_hash,
+            cache_mac = excluded.cache_mac",
+        params![
+            i64::try_from(until).unwrap_or(i64::MAX),
+            machine_hash,
+            cache_mac
+        ],
+    )?;
+    Ok(())
+}
+
+fn authorization_cache_mac(
+    db_dir: &Path,
+    keys: &DbKeys,
+    authorized_until: u64,
+    machine_hash: &str,
+) -> String {
+    let material = format!(
+        "{}\n{}\n{}\n",
+        key_namespace(db_dir),
+        authorized_until,
+        machine_hash
+    );
+    keyed_hmac_hex(&keys.path_hmac_secret, material.as_bytes())
+}
+
+fn authenticate_with_auth_password(conn: &Connection, db_dir: &Path) -> Result<(), AuthError> {
     if !recovery_is_configured(conn)? {
         return Err(AuthError::PasswordNotConfigured);
     }
-    let password = prompt_existing_password(db_dir, "Fallback password: ")?;
+    let password = prompt_existing_password(db_dir, "Auth password: ")?;
+    if verify_fallback_password(conn, &password)? || verify_and_burn_burner(conn, &password)? {
+        Ok(())
+    } else {
+        Err(AuthError::PasswordVerificationFailed)
+    }
+}
+
+fn authenticate_with_backup_password(conn: &Connection, db_dir: &Path) -> Result<(), AuthError> {
+    if !recovery_is_configured(conn)? {
+        return Err(AuthError::PasswordNotConfigured);
+    }
+    let password = prompt_existing_password(db_dir, "Auth password: ")?;
     if verify_fallback_password(conn, &password)? {
         Ok(())
     } else {
@@ -835,8 +939,8 @@ fn restore_keyring_from_recovery(
     signing_name: &str,
     path_name: &str,
 ) -> Result<(Vec<u8>, Vec<u8>), AuthError> {
-    authenticate_with_fallback_password(conn, db_dir)?;
-    let password = prompt_existing_password(db_dir, "Fallback password again to restore keys: ")?;
+    authenticate_with_backup_password(conn, db_dir)?;
+    let password = prompt_existing_password(db_dir, "Auth password again to restore keys: ")?;
     let bundle = decrypt_key_bundle(conn, &password)?;
     let signing = B64
         .decode(bundle.signing_key_b64.as_bytes())
@@ -848,7 +952,7 @@ fn restore_keyring_from_recovery(
     store_secret(path_name, &path_hmac)?;
     if machine_hash_from_database(conn)? != current_machine_hash() {
         eprintln!(
-            "Warning: this database appears to be on a different machine. Run `auth --change-password --dir <database-dir>` to create a fresh fallback password and burner set."
+            "Warning: this database appears to be on a different machine. Run `auth --change-password --dir <database-dir>` to create a fresh auth password and burner set."
         );
     }
     Ok((signing, path_hmac))
@@ -926,7 +1030,7 @@ fn prompt_new_password(db_dir: &Path, prompt: &str) -> Result<String, AuthError>
     loop {
         let first = rpassword::prompt_password(prompt)?;
         validate_password_strength(&first)?;
-        let second = rpassword::prompt_password("Confirm fallback password: ")?;
+        let second = rpassword::prompt_password("Confirm Auth password: ")?;
         if first == second {
             return Ok(first);
         }
@@ -945,8 +1049,7 @@ fn prompt_existing_or_burner_password(db_dir: &Path) -> Result<String, AuthError
     if let Some(password) = test_existing_or_burner_password(db_dir) {
         return Ok(password);
     }
-    rpassword::prompt_password("Current fallback password or burner password: ")
-        .map_err(AuthError::from)
+    rpassword::prompt_password("Auth password: ").map_err(AuthError::from)
 }
 
 fn test_new_passwords(db_dir: &Path) -> Option<(String, String)> {
@@ -1049,8 +1152,8 @@ fn random_alphanumeric(len: usize) -> String {
 fn display_burner_passwords(db_dir: &Path, burners: &[String]) {
     eprintln!("\nSave this information in a password manager.");
     eprintln!("Database: {}", absolute_database_dir(db_dir).display());
-    eprintln!("Fallback password: [the password you just entered]");
-    eprintln!("One-time burner passwords for fallback password changes:");
+    eprintln!("Auth password: [the password you just entered]");
+    eprintln!("One-time burner passwords for auth password changes:");
     for burner in burners {
         eprintln!("  {burner}");
     }
@@ -1203,6 +1306,13 @@ fn initialize_schema(conn: &Connection) -> Result<(), AuthError> {
             created_unix INTEGER NOT NULL,
             used_unix INTEGER
         );
+
+        CREATE TABLE IF NOT EXISTS authorization_cache (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            authorized_until_unix INTEGER NOT NULL,
+            machine_id_hash TEXT NOT NULL,
+            cache_mac TEXT NOT NULL
+        );
         ",
     )?;
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
@@ -1336,7 +1446,7 @@ mod platform {
             .arg(reason)
             .status()
             .map_err(|e| AuthError::UnsupportedAuthorization(format!(
-                "could not invoke auth-macos-touchid helper at {}: {e}. Set AUTH_MACOS_TOUCHID_HELPER or use fallback password authorization.",
+                "could not invoke auth-macos-touchid helper at {}: {e}. Set AUTH_MACOS_TOUCHID_HELPER or use auth password authorization.",
                 helper.display()
             )))?;
         if status.success() {
@@ -1372,20 +1482,9 @@ mod platform {
 
     #[cfg(all(unix, not(target_os = "macos")))]
     pub fn authorize(reason: &str) -> Result<(), AuthError> {
-        // Minimal non-GUI Linux fallback: rely on sudo/PAM policy. This can be replaced with direct PAM.
-        let status = std::process::Command::new("sudo")
-            .arg("-v")
-            .status()
-            .map_err(|e| {
-                AuthError::AuthorizationDenied(format!("could not invoke sudo/PAM: {e}"))
-            })?;
-        if status.success() {
-            Ok(())
-        } else {
-            Err(AuthError::AuthorizationDenied(format!(
-                "PAM/sudo did not authorize: {reason}"
-            )))
-        }
+        Err(AuthError::UnsupportedAuthorization(format!(
+            "Linux/WSL interactive platform authorization is not implemented yet; using Auth password fallback for: {reason}"
+        )))
     }
 
     #[cfg(not(any(unix, windows)))]
@@ -1410,6 +1509,7 @@ mod tests {
             authorization: AuthorizationMode::None,
             reason: "test authorization".to_string(),
             color: ColorMode::Never,
+            cache_seconds: 0,
         }
     }
 
@@ -1616,5 +1716,29 @@ mod tests {
         .unwrap_err();
 
         assert!(matches!(err, AuthError::KeyStorage(_)));
+    }
+    #[test]
+    fn burner_password_can_authorize_once() {
+        let tmp = tempdir().unwrap();
+        let db = tmp.path().join("auth-test");
+
+        fs::create_dir_all(&db).unwrap();
+
+        let conn = open_database(&db).unwrap();
+        let keys = DbKeys::load_or_create(&db, &conn, true).unwrap();
+        configure_recovery_password_with_password(&conn, &db, &keys, "Long-Test-Password-2026!")
+            .unwrap();
+        let burner = "Burner-Test-2026!";
+        conn.execute(
+            "INSERT INTO burner_passwords (password_hash, created_unix, used_unix) VALUES (?1, ?2, NULL)",
+            params![
+                hash_password(burner).unwrap(),
+                i64::try_from(unix_now()).unwrap_or(i64::MAX)
+            ],
+        )
+        .unwrap();
+
+        assert!(verify_and_burn_burner(&conn, burner).unwrap());
+        assert!(!verify_and_burn_burner(&conn, burner).unwrap());
     }
 }
