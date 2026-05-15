@@ -52,6 +52,7 @@ fn write_authorization_for_two_files() {
         .args([
             "--dir",
             path_str(&db),
+            "--request-password",
             "--write",
             path_str(&first),
             path_str(&second),
@@ -82,6 +83,7 @@ fn check_two_authorized_one_unauthorized_and_one_missing_file() {
         .args([
             "--dir",
             path_str(&db),
+            "--request-password",
             "--write",
             path_str(&first),
             path_str(&second),
@@ -136,6 +138,7 @@ fn remove_one_authorized_file_then_check_removed_file_fails() {
         .args([
             "--dir",
             path_str(&db),
+            "--request-password",
             "--write",
             path_str(&first),
             path_str(&second),
@@ -144,7 +147,13 @@ fn remove_one_authorized_file_then_check_removed_file_fails() {
         .success();
 
     auth_cmd()
-        .args(["--dir", path_str(&db), "--remove", path_str(&first)])
+        .args([
+            "--dir",
+            path_str(&db),
+            "--request-password",
+            "--remove",
+            path_str(&first),
+        ])
         .assert()
         .success();
 
@@ -167,7 +176,13 @@ fn write_check_and_detect_change() {
     fs::write(&file, "one\n").unwrap();
 
     auth_cmd()
-        .args(["--dir", path_str(&db), "--write", path_str(&file)])
+        .args([
+            "--dir",
+            path_str(&db),
+            "--request-password",
+            "--write",
+            path_str(&file),
+        ])
         .assert()
         .success();
 
@@ -205,7 +220,7 @@ fn auth_options_can_supply_test_directory() {
     let db = tmp.path().join("auth-test");
     let file = tmp.path().join("env-options.txt");
     fs::write(&file, "contents\n").unwrap();
-    let auth_options = format!("-d {}", path_str(&db));
+    let auth_options = format!("-d {} --request-password", path_str(&db));
 
     auth_cmd()
         .env("AUTH_OPTIONS", auth_options)
@@ -230,14 +245,93 @@ fn cache_time_rejects_values_over_120_seconds() {
         .args([
             "--dir",
             path_str(&db),
-            "--cache-time",
-            "121",
+            "--request-password",
+            "--cache-time=121",
             "--write",
             path_str(&file),
         ])
         .assert()
         .failure()
         .stderr(predicate::str::contains("maximum is 120 seconds"));
+}
+
+#[test]
+fn cache_time_requires_equals_syntax() {
+    let tmp = tempdir().unwrap();
+    let db = tmp.path().join("auth-test");
+    let file = tmp.path().join("cache-syntax.txt");
+    fs::write(&file, "contents\n").unwrap();
+
+    auth_cmd()
+        .args([
+            "--dir",
+            path_str(&db),
+            "--request-password",
+            "--cache-time",
+            "60",
+            "--write",
+            path_str(&file),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("--cache-time=SECONDS"));
+}
+
+#[test]
+fn request_password_with_cache_can_authorize_two_writes() {
+    let tmp = tempdir().unwrap();
+    let db = tmp.path().join("auth-test");
+    let first = tmp.path().join("cache-one.txt");
+    let second = tmp.path().join("cache-two.txt");
+    fs::write(&first, "one\n").unwrap();
+    fs::write(&second, "two\n").unwrap();
+
+    auth_cmd()
+        .args([
+            "--dir",
+            path_str(&db),
+            "--request-password",
+            "--cache-time=60",
+            "--write",
+            path_str(&first),
+            "--write",
+            path_str(&second),
+        ])
+        .assert()
+        .success();
+}
+
+#[test]
+fn show_dir_and_stats_work_with_request_password() {
+    let tmp = tempdir().unwrap();
+    let db = tmp.path().join("auth-test");
+    let file = tmp.path().join("stats.txt");
+    fs::write(&file, "contents\n").unwrap();
+
+    auth_cmd()
+        .args([
+            "--dir",
+            path_str(&db),
+            "--request-password",
+            "--write",
+            path_str(&file),
+        ])
+        .assert()
+        .success();
+
+    auth_cmd()
+        .args(["--dir", path_str(&db), "--request-password", "--show-dir"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Auth directory:"))
+        .stdout(predicate::str::contains("auth.db"));
+
+    auth_cmd()
+        .args(["--dir", path_str(&db), "--request-password", "--stats"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Authorized file entries: 1"))
+        .stdout(predicate::str::contains("Most recent write:"));
 }
 
 #[test]

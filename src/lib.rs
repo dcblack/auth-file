@@ -42,7 +42,7 @@ const TEST_PATH_KEY_FILE: &str = "path-hmac.key";
 const PUBKEY_FILE: &str = "ed25519.verifying-key";
 const KEYRING_SERVICE: &str = "auth-file";
 const SQLITE_FILE: &str = "auth.db";
-const SCHEMA_VERSION: i32 = 4;
+const SCHEMA_VERSION: i32 = 5;
 const PASSWORD_MIN_LEN: usize = 14;
 const PASSWORD_MAX_LEN: usize = 80;
 const PASSWORD_MIN_BITS: f64 = 90.0;
@@ -80,9 +80,11 @@ impl ColorMode {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuthorizationMode {
-    /// Do not ask for biometric/PAM/Hello approval. Useful for CI or bootstrap.
+    /// Do not ask for biometric/PAM/Hello approval. Useful for tests only.
     None,
-    /// Use the best available platform prompt. Falls back to a denial if unavailable.
+    /// Require the configured Auth password or one unused burner password.
+    Password,
+    /// Use the best available platform prompt, falling back to Auth password.
     Platform,
 }
 
@@ -151,6 +153,21 @@ impl AuthReport {
     pub const fn ok(&self) -> bool {
         self.failed == 0
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct AuthStoragePaths {
+    pub auth_dir: PathBuf,
+    pub database: PathBuf,
+}
+
+#[derive(Debug, Clone)]
+pub struct AuthStats {
+    pub auth_dir: PathBuf,
+    pub database: PathBuf,
+    pub entries: u64,
+    pub last_write_utc: Option<String>,
+    pub last_check_utc: Option<String>,
 }
 
 #[derive(Debug, Error)]
@@ -246,7 +263,7 @@ pub fn auth_report(
     ensure_recovery_initialized(&conn, &options.db_dir, &keys)?;
 
     if matches!(action, ActionType::Write | ActionType::Remove)
-        && options.authorization == AuthorizationMode::Platform
+        && options.authorization != AuthorizationMode::None
     {
         authorize_or_use_cache(&conn, &options.db_dir, &keys, options)?;
     }
@@ -463,6 +480,55 @@ pub fn change_fallback_password(options: &AuthOptions) -> Result<Vec<String>, Au
     configure_recovery_password(&conn, &options.db_dir, &keys, true)
 }
 
+/// Return the protected storage paths after authorizing the request.
+///
+/// # Errors
+///
+/// Returns an error if storage cannot be initialized or authorization fails.
+pub fn auth_storage_paths(options: &AuthOptions) -> Result<AuthStoragePaths, AuthError> {
+    let (conn, keys) = prepare_database_for_protected_command(options)?;
+    authorize_or_use_cache(&conn, &options.db_dir, &keys, options)?;
+    Ok(storage_paths(&options.db_dir))
+}
+
+/// Return protected database statistics after authorizing the request.
+///
+/// # Errors
+///
+/// Returns an error if storage cannot be initialized, authorization fails, or
+/// statistics cannot be queried.
+pub fn auth_stats(options: &AuthOptions) -> Result<AuthStats, AuthError> {
+    let (conn, keys) = prepare_database_for_protected_command(options)?;
+    authorize_or_use_cache(&conn, &options.db_dir, &keys, options)?;
+    let entries_i: i64 = conn.query_row("SELECT COUNT(*) FROM records", [], |row| row.get(0))?;
+    let entries = u64::try_from(entries_i).unwrap_or_default();
+    Ok(AuthStats {
+        auth_dir: absolute_database_dir(&options.db_dir),
+        database: absolute_database_dir(&options.db_dir).join(SQLITE_FILE),
+        entries,
+        last_write_utc: metadata_utc(&conn, "last_write_unix")?,
+        last_check_utc: metadata_utc(&conn, "last_check_unix")?,
+    })
+}
+
+fn prepare_database_for_protected_command(
+    options: &AuthOptions,
+) -> Result<(Connection, DbKeys), AuthError> {
+    let database_was_missing = !database_path(&options.db_dir).exists();
+    ensure_storage(&options.db_dir)?;
+    let conn = open_database(&options.db_dir)?;
+    let allow_key_create = database_was_missing || records_table_is_empty(&conn)?;
+    let keys = DbKeys::load_or_create(&options.db_dir, &conn, allow_key_create)?;
+    ensure_recovery_initialized(&conn, &options.db_dir, &keys)?;
+    Ok((conn, keys))
+}
+
+fn storage_paths(db_dir: &Path) -> AuthStoragePaths {
+    let auth_dir = absolute_database_dir(db_dir);
+    let database = auth_dir.join(SQLITE_FILE);
+    AuthStoragePaths { auth_dir, database }
+}
+
 fn write_record(conn: &Connection, path: &Path, keys: &DbKeys) -> Result<(), AuthError> {
     let canonical = canonicalize_existing(path)?;
     let path_hmac = path_hmac(&canonical, &keys.path_hmac_secret);
@@ -517,6 +583,7 @@ fn write_record(conn: &Connection, path: &Path, keys: &DbKeys) -> Result<(), Aut
             B64.encode(signature.to_bytes()),
         ],
     )?;
+    set_metadata_unix(conn, "last_write_unix", unix_now())?;
     Ok(())
 }
 
@@ -548,6 +615,7 @@ fn check_record(conn: &Connection, path: &Path, keys: &DbKeys) -> Result<(), Aut
     }
 
     verify_record(&record, keys)?;
+    set_metadata_unix(conn, "last_check_unix", unix_now())?;
     Ok(())
 }
 
@@ -790,11 +858,17 @@ fn authorize_or_use_cache(
         return Ok(());
     }
 
-    if let Err(platform_error) = platform_authorize(&options.reason) {
-        eprintln!(
-            "Warning: platform authorization unavailable or denied; using Auth password fallback: {platform_error}"
-        );
-        authenticate_with_auth_password(conn, db_dir)?;
+    match options.authorization {
+        AuthorizationMode::None => {}
+        AuthorizationMode::Password => authenticate_with_auth_password(conn, db_dir)?,
+        AuthorizationMode::Platform => {
+            if let Err(platform_error) = platform_authorize(&options.reason) {
+                eprintln!(
+                    "Warning: platform authorization unavailable or denied; using Auth password fallback: {platform_error}"
+                );
+                authenticate_with_auth_password(conn, db_dir)?;
+            }
+        }
     }
 
     cache_successful_authorization(conn, db_dir, keys, options.cache_seconds)
@@ -1313,10 +1387,34 @@ fn initialize_schema(conn: &Connection) -> Result<(), AuthError> {
             machine_id_hash TEXT NOT NULL,
             cache_mac TEXT NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS metadata (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
         ",
     )?;
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     Ok(())
+}
+
+fn set_metadata_unix(conn: &Connection, key: &str, value: u64) -> Result<(), AuthError> {
+    conn.execute(
+        "INSERT INTO metadata (key, value) VALUES (?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        params![key, value.to_string()],
+    )?;
+    Ok(())
+}
+
+fn metadata_utc(conn: &Connection, key: &str) -> Result<Option<String>, AuthError> {
+    conn.query_row(
+        "SELECT datetime(CAST(value AS INTEGER), 'unixepoch') || 'Z' FROM metadata WHERE key = ?1",
+        params![key],
+        |row| row.get(0),
+    )
+    .optional()
+    .map_err(AuthError::from)
 }
 
 fn database_path(db_dir: &Path) -> PathBuf {
@@ -1721,9 +1819,7 @@ mod tests {
     fn burner_password_can_authorize_once() {
         let tmp = tempdir().unwrap();
         let db = tmp.path().join("auth-test");
-
         fs::create_dir_all(&db).unwrap();
-
         let conn = open_database(&db).unwrap();
         let keys = DbKeys::load_or_create(&db, &conn, true).unwrap();
         configure_recovery_password_with_password(&conn, &db, &keys, "Long-Test-Password-2026!")

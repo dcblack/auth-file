@@ -3,7 +3,10 @@
 #![deny(clippy::all)]
 #![warn(clippy::pedantic)]
 
-use authlib::{auth_report, change_fallback_password, ActionType, AuthOptions, ColorMode, VERSION};
+use authlib::{
+    auth_report, auth_stats, auth_storage_paths, change_fallback_password, ActionType, AuthOptions,
+    AuthorizationMode, ColorMode, VERSION,
+};
 use std::env;
 use std::io::{self, IsTerminal, Write};
 use std::path::PathBuf;
@@ -23,23 +26,28 @@ Synopsis
   auth --check  [OPTIONS] FILENAME(S)
   auth --remove [OPTIONS] FILENAME(S)
   auth --change-password [OPTIONS]
+  auth --show-dir [OPTIONS]
+  auth --stats [OPTIONS]
 
 Options
 -------
 
-  --help, -h                 Display this text using a pager when interactive
-  --version                  Display version
-  --dir DIR, -d DIR          Specify database directory [default: ~/.auth]
-  --check, -ck               Verify specified files are valid
-  --write, -wr               Authorize files; requires platform authorization or auth password
-  --remove, -rm              Remove authorization; requires platform authorization or auth password
+  --cache-time=SECONDS       Cache successful authorization for 0-120 seconds [default: 0]
   --change-password          Change auth password using current password or burner
-  --verbose, -v              Increase verbosity
-  --quiet, -q                Report failures only
-  --silent, -s               Silent even with failure, useful in scripts
-  --force, -f                Reserved for future non-security confirmation prompts
+  --check, -ck               Verify specified files are valid
   --color WHEN               Color output: auto, always, never [default: auto]
-  --cache-time SECONDS       Cache successful authorization for 0-120 seconds [default: 0]
+  --dir DIR, -d DIR          Specify database directory [default: ~/.auth]
+  --force, -f                Reserved for future non-security confirmation prompts
+  --help, -h                 Display this text using a pager when interactive
+  --quiet, -q                Report failures only
+  --remove, -rm              Remove authorization; requires platform authorization or auth password
+  --request-password         Require Auth password/burner instead of platform authorization
+  --show-dir                 Display auth storage paths; requires authorization
+  --silent, -s               Silent even with failure, useful in scripts
+  --stats                    Display database statistics; requires authorization
+  --verbose, -v              Increase verbosity
+  --version                  Display version
+  --write, -wr               Authorize files; requires platform authorization or auth password
 
 Environment
 -----------
@@ -62,6 +70,7 @@ Compatibility
 
     auth --write a.txt b.txt
     auth --check a.txt b.txt
+    auth --request-password --cache-time=60 --write a.txt b.txt
 
 Exit Status
 -----------
@@ -70,6 +79,14 @@ Exit Status
   1  at least one requested operation failed
   2  command-line usage error
 "#;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CommandMode {
+    FileActions,
+    ChangePassword,
+    ShowDir,
+    Stats,
+}
 
 fn main() -> ExitCode {
     match run() {
@@ -116,7 +133,7 @@ struct CliState {
     options: AuthOptions,
     overall_ok: bool,
     current_files: Vec<String>,
-    change_password_requested: bool,
+    mode: CommandMode,
 }
 
 impl Default for CliState {
@@ -126,7 +143,7 @@ impl Default for CliState {
             options: AuthOptions::default(),
             overall_ok: true,
             current_files: Vec::new(),
-            change_password_requested: false,
+            mode: CommandMode::FileActions,
         }
     }
 }
@@ -142,28 +159,18 @@ fn execute_args(args: &[String]) -> Result<bool, String> {
 }
 
 fn parse_one_arg(args: &[String], i: &mut usize, state: &mut CliState) -> Result<(), String> {
-    match args[*i].as_str() {
+    let arg = args[*i].as_str();
+    match arg {
         "-ck" | "--check" => switch_action(state, ActionType::Check),
         "-wr" | "--write" => switch_action(state, ActionType::Write),
         "-rm" | "--remove" => switch_action(state, ActionType::Remove),
-        "--change-password" => state.change_password_requested = true,
-        "-v" | "--verbose" => state.options.verbose = 1,
-        "-q" | "--quiet" => state.options.verbose = 0,
-        "-s" | "--silent" => state.options.verbose = -1,
-        "-f" | "--force" => state.options.force = true,
+        "--change-password" => set_mode(state, CommandMode::ChangePassword)?,
         "--color" => {
             *i += 1;
             let mode = args
                 .get(*i)
                 .ok_or_else(|| "missing value after --color".to_string())?;
             state.options.color = parse_color_mode(mode)?;
-        }
-        "--cache-time" => {
-            *i += 1;
-            let seconds = args
-                .get(*i)
-                .ok_or_else(|| "missing value after --cache-time".to_string())?;
-            state.options.cache_seconds = parse_cache_time(seconds)?;
         }
         "-d" | "--dir" => {
             *i += 1;
@@ -172,11 +179,33 @@ fn parse_one_arg(args: &[String], i: &mut usize, state: &mut CliState) -> Result
                 .ok_or_else(|| "missing directory after --dir".to_string())?;
             state.options.db_dir = PathBuf::from(dir);
         }
+        "-f" | "--force" => state.options.force = true,
         "--help" | "-h" => return Err("--help must be the first option".to_string()),
+        "-q" | "--quiet" => state.options.verbose = 0,
+        "--request-password" => state.options.authorization = AuthorizationMode::Password,
+        "--show-dir" => set_mode(state, CommandMode::ShowDir)?,
+        "-s" | "--silent" => state.options.verbose = -1,
+        "--stats" => set_mode(state, CommandMode::Stats)?,
+        "-v" | "--verbose" => state.options.verbose = 1,
         "--version" => return Err("--version must be the first option".to_string()),
+        unknown if unknown.starts_with("--cache-time=") => {
+            let Some((_, seconds)) = unknown.split_once('=') else {
+                return Err("--cache-time requires --cache-time=SECONDS syntax".to_string());
+            };
+            state.options.cache_seconds = parse_cache_time(seconds)?;
+        }
+        "--cache-time" => return Err("use --cache-time=SECONDS".to_string()),
         unknown if unknown.starts_with('-') => return Err(format!("unknown option {unknown}")),
         filename => state.current_files.push(filename.to_string()),
     }
+    Ok(())
+}
+
+fn set_mode(state: &mut CliState, mode: CommandMode) -> Result<(), String> {
+    if state.mode != CommandMode::FileActions && state.mode != mode {
+        return Err("only one non-file command may be requested".to_string());
+    }
+    state.mode = mode;
     Ok(())
 }
 
@@ -186,26 +215,64 @@ fn switch_action(state: &mut CliState, action: ActionType) {
 }
 
 fn finalize_cli_state(state: &mut CliState) -> Result<bool, String> {
-    if state.change_password_requested {
-        if !state.current_files.is_empty() {
-            return Err("--change-password cannot be mixed with file operands".to_string());
+    match state.mode {
+        CommandMode::FileActions => {
+            flush_current_files(state);
+            Ok(state.overall_ok)
         }
-        let burners = change_fallback_password(&state.options).map_err(|e| e.to_string())?;
-        eprintln!(
-            "{}",
-            state.options.colorize_warning(
-                "CRITICAL: Save these one-time burner passwords in a password manager. They will not be shown again."
-            )
-        );
-        eprintln!("Database: {}", state.options.db_dir.display());
-        for burner in burners {
-            eprintln!("  {burner}");
-        }
-        return Ok(true);
+        CommandMode::ChangePassword => change_password(state),
+        CommandMode::ShowDir => show_dir(state),
+        CommandMode::Stats => show_stats(state),
     }
+}
 
-    flush_current_files(state);
-    Ok(state.overall_ok)
+fn change_password(state: &CliState) -> Result<bool, String> {
+    reject_file_operands(state, "--change-password")?;
+    let burners = change_fallback_password(&state.options).map_err(|e| e.to_string())?;
+    eprintln!(
+        "{}",
+        state.options.colorize_warning(
+            "CRITICAL: Save these one-time burner passwords in a password manager. They will not be shown again."
+        )
+    );
+    eprintln!("Database: {}", state.options.db_dir.display());
+    for burner in burners {
+        eprintln!("  {burner}");
+    }
+    Ok(true)
+}
+
+fn show_dir(state: &CliState) -> Result<bool, String> {
+    reject_file_operands(state, "--show-dir")?;
+    let paths = auth_storage_paths(&state.options).map_err(|e| e.to_string())?;
+    println!("Auth directory: {}", paths.auth_dir.display());
+    println!("Database: {}", paths.database.display());
+    Ok(true)
+}
+
+fn show_stats(state: &CliState) -> Result<bool, String> {
+    reject_file_operands(state, "--stats")?;
+    let auth_statistics = auth_stats(&state.options).map_err(|e| e.to_string())?;
+    println!("Auth directory: {}", auth_statistics.auth_dir.display());
+    println!("Database: {}", auth_statistics.database.display());
+    println!("Authorized file entries: {}", auth_statistics.entries);
+    println!(
+        "Most recent write: {}",
+        auth_statistics.last_write_utc.as_deref().unwrap_or("never")
+    );
+    println!(
+        "Most recent check: {}",
+        auth_statistics.last_check_utc.as_deref().unwrap_or("never")
+    );
+    Ok(true)
+}
+
+fn reject_file_operands(state: &CliState, option: &str) -> Result<(), String> {
+    if state.current_files.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("{option} cannot be mixed with file operands"))
+    }
 }
 
 fn flush_current_files(state: &mut CliState) {

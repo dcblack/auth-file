@@ -6,6 +6,22 @@ The format is based on Keep a Changelog, and this project aims to follow Semanti
 
 
 
+
+## [0.8.4] - 2026-05-15
+
+### Added
+
+- Added `--request-password` to force Auth password / burner authorization.
+- Added `--show-dir` to display protected storage paths after authorization.
+- Added `--stats` to display entry count plus most recent write/check times after authorization.
+- Added metadata storage for `last_write_unix` and `last_check_unix`.
+
+### Changed
+
+- `--cache-time` now requires `--cache-time=SECONDS` syntax.
+- Help options are alphabetized.
+- Schema version bumped to 5.
+
 ## [0.8.3] - 2026-05-14
 
 ### Changed

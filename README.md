@@ -246,4 +246,15 @@ The `--no-platform-auth` option has been removed from the CLI; fallback-password
 
 ### Authorization cache
 
-`--cache-time SECONDS` caches a successful platform/fallback authorization for the selected database for up to 120 seconds. The default is `0`, which disables caching. The cache entry is MAC-protected and tied to the current machine hash and database namespace.
+`--cache-time=SECONDS` caches a successful platform/fallback authorization for the selected database for up to 120 seconds. The default is `0`, which disables caching. The cache entry is MAC-protected and tied to the current machine hash and database namespace.
+
+
+## v0.8.4 CLI additions
+
+Options in help are alphabetized. `--cache-time` now requires equals syntax, for example `--cache-time=60`, and remains limited to 120 seconds.
+
+`--request-password` forces the Auth password / burner route instead of platform authorization. This is useful for CI, WSL, and systems where the platform prompt is unavailable. It is not a bypass; a valid Auth password or unused burner password is still required.
+
+`--show-dir` displays the absolute auth directory and database path after authorization.
+
+`--stats` displays the number of authorized file entries, the most recent successful write, and the most recent successful check after authorization.

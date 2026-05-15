@@ -35,31 +35,31 @@ help: # default target
 #.______________________________________________________________________________
 #| * unpack - extract version from archives
 unpack:
-ifeq ("${VERS}","")
-	@echo ""$(error Must specify VERS=)
-endif
-	check-version ${VERS}
-	unpack "$(firstword ${VERS})"
+	check-version "${VERS}"
+	unpack "${VERS}"
 
 #.______________________________________________________________________________
-#| * upload - test, commit, tag and push
-upload:
-ifeq ("${VERS}","")
-	@echo ""$(error Must specify VERS=)
-endif
-	check-version ${VERS}
+#| * validate - run stringent checks (Clippy) and all tests
+validate:
 	cargo fmt --all
 	cargo check
 	cargo clippy --all-targets --all-features -- -D warnings
 	cargo test --all-targets --all-features
+	date > validated.txt
+	uname -a >> validated.txt
+
+#.______________________________________________________________________________
+#| * upload - validate
+upload: validate
 	check-version ${VERS}
-ifeq ($(words ${VERS}),1)
-	git commit -a
-	git tag -a -s "v${VERS}"
-else
-	git commit -a -m "${VERS}"
-	git tag -a -s -m "${VERS}" "v$(firstword ${VERS})"
-endif
+	v=(${VERS});\
+        if [[ $${#v[@]} == 1 ]]; then\
+          git commit -a;\
+          git tag -a -s "v${VERS}";\
+        else\
+          git commit -a -m "${VERS}";\
+          git tag -a -s -m "${VERS}" "v$(firstword ${VERS})";\
+        fi
 	git push
 
 #.______________________________________________________________________________
