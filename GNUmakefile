@@ -33,6 +33,11 @@ help: # default target
 	 fi
 
 #.______________________________________________________________________________
+#| * version - check the version
+version:
+	check-version --show
+
+#.______________________________________________________________________________
 #| * unpack - extract version from archives
 unpack:
 	check-version "${VERS}"

@@ -42,6 +42,7 @@ Options
   --quiet, -q                Report failures only
   --remove, -rm              Remove authorization; requires platform authorization or auth password
   --request-password         Require Auth password/burner instead of platform authorization
+  --root-dir=PATH          Store/check paths relative to this canonical root
   --show-dir                 Display auth storage paths; requires authorization
   --silent, -s               Silent even with failure, useful in scripts
   --stats                    Display database statistics; requires authorization
@@ -70,7 +71,7 @@ Compatibility
 
     auth --write a.txt b.txt
     auth --check a.txt b.txt
-    auth --request-password --cache-time=60 --write a.txt b.txt
+    auth --request-password --cache-time=60 --root-dir=. --write a.txt b.txt
 
 Exit Status
 -----------
@@ -183,6 +184,17 @@ fn parse_one_arg(args: &[String], i: &mut usize, state: &mut CliState) -> Result
         "--help" | "-h" => return Err("--help must be the first option".to_string()),
         "-q" | "--quiet" => state.options.verbose = 0,
         "--request-password" => state.options.authorization = AuthorizationMode::Password,
+        unknown if unknown.starts_with("--root-dir=") => {
+            let Some((_, root)) = unknown.split_once('=') else {
+                return Err("--root-dir requires --root-dir=PATH syntax".to_string());
+            };
+            state.options.root_dir = if root.is_empty() {
+                None
+            } else {
+                Some(PathBuf::from(root))
+            };
+        }
+        "--root-dir" => return Err("use --root-dir=PATH".to_string()),
         "--show-dir" => set_mode(state, CommandMode::ShowDir)?,
         "-s" | "--silent" => state.options.verbose = -1,
         "--stats" => set_mode(state, CommandMode::Stats)?,

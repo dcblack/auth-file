@@ -335,6 +335,59 @@ fn show_dir_and_stats_work_with_request_password() {
 }
 
 #[test]
+fn root_dir_allows_portable_relative_identity() {
+    let tmp = tempdir().unwrap();
+    let db = tmp.path().join("auth-test");
+    let first_root = tmp.path().join("first-root");
+    let second_root = tmp.path().join("second-root");
+    let first_file = first_root.join("pkg").join("config.txt");
+    let second_file = second_root.join("pkg").join("config.txt");
+    fs::create_dir_all(first_file.parent().unwrap()).unwrap();
+    fs::create_dir_all(second_file.parent().unwrap()).unwrap();
+    fs::write(&first_file, "portable contents\n").unwrap();
+    fs::write(&second_file, "portable contents\n").unwrap();
+
+    auth_cmd()
+        .args([
+            "--dir",
+            path_str(&db),
+            "--request-password",
+            "--root-dir",
+            path_str(&first_root),
+            "--write",
+            path_str(&first_file),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("--root-dir=PATH"));
+
+    let first_root_arg = format!("--root-dir={}", path_str(&first_root));
+    auth_cmd()
+        .args([
+            "--dir",
+            path_str(&db),
+            "--request-password",
+            first_root_arg.as_str(),
+            "--write",
+            path_str(&first_file),
+        ])
+        .assert()
+        .success();
+
+    let second_root_arg = format!("--root-dir={}", path_str(&second_root));
+    auth_cmd()
+        .args([
+            "--dir",
+            path_str(&db),
+            second_root_arg.as_str(),
+            "--check",
+            path_str(&second_file),
+        ])
+        .assert()
+        .success();
+}
+
+#[test]
 fn color_always_colors_errors_and_no_color_disables_auto() {
     let tmp = tempdir().unwrap();
     let db = tmp.path().join("auth-test");

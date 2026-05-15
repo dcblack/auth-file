@@ -42,7 +42,7 @@ const TEST_PATH_KEY_FILE: &str = "path-hmac.key";
 const PUBKEY_FILE: &str = "ed25519.verifying-key";
 const KEYRING_SERVICE: &str = "auth-file";
 const SQLITE_FILE: &str = "auth.db";
-const SCHEMA_VERSION: i32 = 5;
+const SCHEMA_VERSION: i32 = 6;
 const PASSWORD_MIN_LEN: usize = 14;
 const PASSWORD_MAX_LEN: usize = 80;
 const PASSWORD_MIN_BITS: f64 = 90.0;
@@ -97,6 +97,7 @@ pub struct AuthOptions {
     pub reason: String,
     pub color: ColorMode,
     pub cache_seconds: u64,
+    pub root_dir: Option<PathBuf>,
 }
 
 impl Default for AuthOptions {
@@ -109,6 +110,7 @@ impl Default for AuthOptions {
             reason: "Authorize file trust database change".to_string(),
             color: ColorMode::Auto,
             cache_seconds: 0,
+            root_dir: None,
         }
     }
 }
@@ -198,6 +200,10 @@ pub enum AuthError {
     Recovery(String),
     #[error("unsupported platform authorization: {0}")]
     UnsupportedAuthorization(String),
+    #[error("root directory is invalid: {0}")]
+    InvalidRootDirectory(PathBuf),
+    #[error("file is outside root directory: {file}; root: {root}")]
+    FileOutsideRoot { file: PathBuf, root: PathBuf },
     #[error("file is not readable: {0}")]
     FileNotReadable(PathBuf),
     #[error("authorization record does not exist for {0}")]
@@ -282,7 +288,7 @@ pub fn auth_report(
         }
 
         match action {
-            ActionType::Write => match write_record(&conn, &path, &keys) {
+            ActionType::Write => match write_record(&conn, &path, &keys, options) {
                 Ok(()) => {
                     report.written += 1;
                     if options.verbose > 0 {
@@ -301,7 +307,7 @@ pub fn auth_report(
             },
             ActionType::Check => {
                 report.checked += 1;
-                match check_record(&conn, &path, &keys) {
+                match check_record(&conn, &path, &keys, options) {
                     Ok(()) => {
                         report.passed += 1;
                         if options.verbose > 0 {
@@ -319,7 +325,7 @@ pub fn auth_report(
                     }
                 }
             }
-            ActionType::Remove => match remove_record(&conn, &path, &keys) {
+            ActionType::Remove => match remove_record(&conn, &path, &keys, options) {
                 Ok(true) => {
                     report.removed += 1;
                     if options.verbose > 0 {
@@ -529,9 +535,15 @@ fn storage_paths(db_dir: &Path) -> AuthStoragePaths {
     AuthStoragePaths { auth_dir, database }
 }
 
-fn write_record(conn: &Connection, path: &Path, keys: &DbKeys) -> Result<(), AuthError> {
+fn write_record(
+    conn: &Connection,
+    path: &Path,
+    keys: &DbKeys,
+    options: &AuthOptions,
+) -> Result<(), AuthError> {
     let canonical = canonicalize_existing(path)?;
-    let path_hmac = path_hmac(&canonical, &keys.path_hmac_secret);
+    let identity = path_identity_for_existing(&canonical, options)?;
+    let path_hmac = path_hmac(&identity, &keys.path_hmac_secret);
     let digest = file_sha256(&canonical)?;
     let size = fs::metadata(&canonical)?.len();
     let now = unix_now();
@@ -587,9 +599,15 @@ fn write_record(conn: &Connection, path: &Path, keys: &DbKeys) -> Result<(), Aut
     Ok(())
 }
 
-fn check_record(conn: &Connection, path: &Path, keys: &DbKeys) -> Result<(), AuthError> {
+fn check_record(
+    conn: &Connection,
+    path: &Path,
+    keys: &DbKeys,
+    options: &AuthOptions,
+) -> Result<(), AuthError> {
     let canonical = canonicalize_existing(path)?;
-    let path_hmac = path_hmac(&canonical, &keys.path_hmac_secret);
+    let identity = path_identity_for_existing(&canonical, options)?;
+    let path_hmac = path_hmac(&identity, &keys.path_hmac_secret);
     let record = load_record(conn, &path_hmac)?
         .ok_or_else(|| AuthError::RecordMissing(path.to_path_buf()))?;
     let digest = file_sha256(&canonical)?;
@@ -619,13 +637,14 @@ fn check_record(conn: &Connection, path: &Path, keys: &DbKeys) -> Result<(), Aut
     Ok(())
 }
 
-fn remove_record(conn: &Connection, path: &Path, keys: &DbKeys) -> Result<bool, AuthError> {
-    let canonical = if path.exists() {
-        canonicalize_existing(path)?
-    } else {
-        path.to_path_buf()
-    };
-    let path_hmac = path_hmac(&canonical, &keys.path_hmac_secret);
+fn remove_record(
+    conn: &Connection,
+    path: &Path,
+    keys: &DbKeys,
+    options: &AuthOptions,
+) -> Result<bool, AuthError> {
+    let identity = path_identity_for_remove(path, options)?;
+    let path_hmac = path_hmac(&identity, &keys.path_hmac_secret);
     let count = conn.execute(
         "DELETE FROM records WHERE path_hmac_sha256 = ?1",
         params![path_hmac],
@@ -704,8 +723,72 @@ fn load_record(conn: &Connection, path_hmac: &str) -> Result<Option<AuthRecord>,
     .map_err(AuthError::from)
 }
 
-fn path_hmac(path: &Path, key: &[u8]) -> String {
-    keyed_hmac_hex(key, path.to_string_lossy().as_bytes())
+fn path_hmac(identity: &str, key: &[u8]) -> String {
+    keyed_hmac_hex(key, identity.as_bytes())
+}
+
+fn path_identity_for_existing(path: &Path, options: &AuthOptions) -> Result<String, AuthError> {
+    if let Some(root_dir) = effective_root_dir(options)? {
+        let relative = path
+            .strip_prefix(&root_dir)
+            .map_err(|_| AuthError::FileOutsideRoot {
+                file: path.to_path_buf(),
+                root: root_dir.clone(),
+            })?;
+        Ok(format!("root:{}", portable_path_string(relative)))
+    } else {
+        Ok(format!("full:{}", portable_path_string(path)))
+    }
+}
+
+fn path_identity_for_remove(path: &Path, options: &AuthOptions) -> Result<String, AuthError> {
+    if path.exists() {
+        return path_identity_for_existing(&canonicalize_existing(path)?, options);
+    }
+
+    if let Some(root_dir) = effective_root_dir(options)? {
+        let absolute = absolute_path(path);
+        let relative =
+            absolute
+                .strip_prefix(&root_dir)
+                .map_err(|_| AuthError::FileOutsideRoot {
+                    file: absolute.clone(),
+                    root: root_dir.clone(),
+                })?;
+        Ok(format!("root:{}", portable_path_string(relative)))
+    } else {
+        Ok(format!(
+            "full:{}",
+            portable_path_string(&absolute_path(path))
+        ))
+    }
+}
+
+fn effective_root_dir(options: &AuthOptions) -> Result<Option<PathBuf>, AuthError> {
+    options
+        .root_dir
+        .as_deref()
+        .map(|root| {
+            fs::canonicalize(root).map_err(|_| AuthError::InvalidRootDirectory(root.to_path_buf()))
+        })
+        .transpose()
+}
+
+fn absolute_path(path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(path)
+    }
+}
+
+fn portable_path_string(path: &Path) -> String {
+    path.components()
+        .map(|component| component.as_os_str().to_string_lossy().into_owned())
+        .collect::<Vec<String>>()
+        .join("/")
 }
 
 fn keyed_hmac_hex(key: &[u8], material: &[u8]) -> String {
@@ -1608,6 +1691,7 @@ mod tests {
             reason: "test authorization".to_string(),
             color: ColorMode::Never,
             cache_seconds: 0,
+            root_dir: None,
         }
     }
 
@@ -1836,5 +1920,40 @@ mod tests {
 
         assert!(verify_and_burn_burner(&conn, burner).unwrap());
         assert!(!verify_and_burn_burner(&conn, burner).unwrap());
+    }
+
+    #[test]
+    fn root_dir_allows_same_relative_file_under_different_roots() {
+        let tmp = tempdir().unwrap();
+        let db = tmp.path().join("auth-test");
+        let first_root = tmp.path().join("first-root");
+        let second_root = tmp.path().join("second-root");
+        let first_file = first_root.join("pkg").join("config.txt");
+        let second_file = second_root.join("pkg").join("config.txt");
+        fs::create_dir_all(first_file.parent().unwrap()).unwrap();
+        fs::create_dir_all(second_file.parent().unwrap()).unwrap();
+        fs::write(&first_file, "portable contents\n").unwrap();
+        fs::write(&second_file, "portable contents\n").unwrap();
+
+        let mut first_options = test_options(&db);
+        first_options.root_dir = Some(first_root.clone());
+        let wr = auth_report(
+            ActionType::Write,
+            vec![first_file.to_string_lossy().into_owned()],
+            &first_options,
+        )
+        .unwrap();
+        assert!(wr.ok());
+
+        let mut second_options = test_options(&db);
+        second_options.root_dir = Some(second_root);
+        let ck = auth_report(
+            ActionType::Check,
+            vec![second_file.to_string_lossy().into_owned()],
+            &second_options,
+        )
+        .unwrap();
+        assert!(ck.ok());
+        assert_eq!(ck.passed, 1);
     }
 }

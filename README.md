@@ -258,3 +258,14 @@ Options in help are alphabetized. `--cache-time` now requires equals syntax, for
 `--show-dir` displays the absolute auth directory and database path after authorization.
 
 `--stats` displays the number of authorized file entries, the most recent successful write, and the most recent successful check after authorization.
+
+### Root-relative path identity
+
+Use `--root-dir=PATH` when a set of files should be authorized by their path relative to a canonical root directory rather than by their full absolute path. This is useful for packaged or copied trees where the same relative file layout may live under different parent directories.
+
+```bash
+auth --request-password --root-dir=/path/to/tree --write /path/to/tree/bin/tool
+auth --root-dir=/other/copy/of/tree --check /other/copy/of/tree/bin/tool
+```
+
+Use `--root-dir=` to return to full-path identity when supplying options through `AUTH_OPTIONS`.

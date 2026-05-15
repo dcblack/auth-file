@@ -7,6 +7,18 @@ The format is based on Keep a Changelog, and this project aims to follow Semanti
 
 
 
+## [0.8.5] - 2026-05-15
+
+### Added
+
+- Added `--root-dir=PATH` to authorize/check/remove files using a canonical root-relative path identity.
+- Added support for `AUTH_OPTIONS` to provide `--root-dir=PATH`.
+- Added tests showing a rooted authorization can validate the same relative file under a different root.
+
+### Notes
+
+- Machine information is not part of file path authorization hashes. Machine data is used only for recovery/cache metadata, so `--no-machine-lock` was not added in this version.
+
 ## [0.8.4] - 2026-05-15
 
 ### Added
