@@ -48,7 +48,7 @@ function Project_setup()
       PROJECT_DIR="$(dirname "${SETUP_PATH}")"
       PROJECT_NAME="$(basename "${PROJECT_DIR}")"
       export GIT_WORK_DIR PROJECT_NAME PROJECT_DIR ENTRY_DIR
-      Prepend_path PATH "${PROJECT_DIR}/bin"
+      Prepend_path PATH "${PROJECT_DIR}/dev-tools"
       Unique_path PATH
       if [[ -n "${GIT_WORK_DIR}" ]]; then
         Header -uc -Color -hbar=- "${GIT_WORK_DIR/*\/}"
@@ -61,7 +61,7 @@ function Project_setup()
     rm|-rm|--rm)
       unset GIT_WORK_DIR
       PROJECT_NAME="$(basename "${PROJECT_DIR}")"
-      Remove_path PATH "${PROJECT_DIR}/bin"
+      Remove_path PATH "${PROJECT_DIR}/dev-tools"
       echo "$1: ${PROJECT_NAME} environment removed"
       ;;
     *)

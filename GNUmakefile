@@ -25,6 +25,7 @@ PHONIES := $(shell perl -lane 'print $$1 if m{^([a-zA-Z][-a-zA-Z0-9_]*):[^=]*$$}
 .DEFAULT_GOAL := help
 
 GIT_WORK_PATH := $(shell ${GIT_EXE} rev-parse --show-toplevel)
+DEV_TOOLS := ${GIT_WORK_PATH}/dev-tools
 SBOM_PATH := ${GIT_WORK_PATH}/sbom/sbom.json
 
 #.______________________________________________________________________________
@@ -36,21 +37,21 @@ SBOM_PATH := ${GIT_WORK_PATH}/sbom/sbom.json
 #      A special call to the Test macro also goes to targets if in the TESTS makefile if it exists.
 TESTS = tests.mk # can be overridden
 help: # default target
-	@python3 bin/make-help.py ${THIS_MAKEFILE} ${TESTS}
+	@python3 ${DEV_TOOLS}/make-help.py ${THIS_MAKEFILE} ${TESTS}
 
 #.______________________________________________________________________________
 #| * version - check the version
 version:
-	python3 bin/check-version.py --show
+	python3 ${DEV_TOOLS}/check-version.py --show
 
 #.______________________________________________________________________________
 #| * unpack - extract version from archives
 unpack:
 	if [[ -n "${VERS}" ]]; then \
-	          python3 bin/check-version.py "${VERS}"; \
-	          python3 bin/unpack.py "$(python3 bin/check-version.py ${VERS})"; \
+	          python3 ${DEV_TOOLS}/check-version.py "${VERS}"; \
+	          python3 ${DEV_TOOLS}/unpack.py "$(python3 ${DEV_TOOLS}/check-version.py ${VERS})"; \
 	        else \
-	          python3 bin/unpack.py "$(python3 bin/check-version.py)" \
+	          python3 ${DEV_TOOLS}/unpack.py "$(python3 ${DEV_TOOLS}/check-version.py)" \
 	        fi
 
 #.______________________________________________________________________________
@@ -63,12 +64,12 @@ validate:
 	echo "Validate completed" > validated.txt
 	date                     >> validated.txt
 	uname -a                 >> validated.txt
-	python3 bin/check-version.py --show >> validated.txt
+	python3 ${DEV_TOOLS}/check-version.py --show >> validated.txt
 
 #.______________________________________________________________________________
 #| * upload - validate
 upload: validate
-	python3 bin/check-version.py ${VERS}
+	python3 ${DEV_TOOLS}/check-version.py ${VERS}
 	set -- ${VERS}; \
     if [[ $$# == 1 ]]; then \
       git commit -a; \
