@@ -1,0 +1,66 @@
+_auth()
+{
+    local cur prev
+    cur=${COMP_WORDS[COMP_CWORD]}
+    prev=${COMP_WORDS[COMP_CWORD-1]}
+
+    local -a options color_modes cache_times
+    options=(
+        --cache-time=
+        --change-password
+        -ck --check
+        --color
+        -d --dir
+        -f --force
+        -h --help
+        -q --quiet
+        --request-password
+        --root-dir=
+        --show-dir
+        -s --silent
+        --stats
+        -v --verbose
+        --version
+        -wr --write
+        -rm --remove
+    )
+    color_modes=(auto always never)
+    cache_times=(0 15 30 60 120)
+
+    case "$prev" in
+        --color)
+            COMPREPLY=( $(compgen -W "${color_modes[*]}" -- "$cur") )
+            return 0
+            ;;
+        -d|--dir)
+            COMPREPLY=( $(compgen -d -- "$cur") )
+            return 0
+            ;;
+    esac
+
+    case "$cur" in
+        --color=*)
+            COMPREPLY=( $(compgen -W "${color_modes[*]}" -- "${cur#--color=}") )
+            COMPREPLY=( "${COMPREPLY[@]/#/--color=}" )
+            return 0
+            ;;
+        --cache-time=*)
+            COMPREPLY=( $(compgen -W "${cache_times[*]}" -- "${cur#--cache-time=}") )
+            COMPREPLY=( "${COMPREPLY[@]/#/--cache-time=}" )
+            return 0
+            ;;
+        --root-dir=*)
+            COMPREPLY=( $(compgen -d -- "${cur#--root-dir=}") )
+            COMPREPLY=( "${COMPREPLY[@]/#/--root-dir=}" )
+            return 0
+            ;;
+        -*)
+            COMPREPLY=( $(compgen -W "${options[*]}" -- "$cur") )
+            return 0
+            ;;
+    esac
+
+    COMPREPLY=( $(compgen -f -- "$cur") )
+}
+
+complete -F _auth auth

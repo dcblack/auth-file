@@ -12,7 +12,7 @@ This is a development implementation intended for review and platform testing.
 
 ## Auth password recovery
 
-Normal databases can establish a auth password and ten one-time burner passwords. The auth password is stored as an Argon2id password hash. A backup copy of the database key material is encrypted with a key derived from the auth password. Burner passwords are intended only for changing the auth password. Store the auth password, burners, and full database path in a password manager.
+Normal databases can establish an auth password and ten one-time burner passwords. The auth password is stored as an Argon2id password hash. A backup copy of the database key material is encrypted with a key derived from the auth password. Burner passwords are intended only for changing the auth password. Store the auth password, burners, and full database path in a password manager.
 
 Use:
 
@@ -43,12 +43,12 @@ The database stores:
 
 ## Supported platforms
 
-| Platform | Status | Authorization backend |
-|---|---:|---|
-| macOS Tahoe | test target | Touch ID / password fallback through LocalAuthentication helper |
-| Windows 11 | test target | Windows Hello through `UserConsentVerifier` |
-| Ubuntu 24.04 | test target | PAM through `sudo -v` fallback |
-| Other Linux | experimental | PAM through `sudo -v` fallback |
+| Platform     |       Status | Authorization backend                                           |
+|--------------|-------------:|-----------------------------------------------------------------|
+| macOS Tahoe  |  test target | Touch ID / password fallback through LocalAuthentication helper |
+| Windows 11   |  test target | Windows Hello through `UserConsentVerifier`                     |
+| Ubuntu 24.04 |  test target | PAM through `sudo -v` fallback                                  |
+| Other Linux  | experimental | PAM through `sudo -v` fallback                                  |
 
 See `docs/platform-support.md` for details.
 
@@ -104,6 +104,42 @@ pub fn auth_report(
 
 ```bash
 cargo build --release
+```
+
+## Zsh completions
+
+Zsh completion functions are provided in `completions/zsh/`.
+
+To enable them for the current user:
+
+```zsh
+fpath=("$PWD/completions/zsh" $fpath)
+autoload -Uz compinit
+compinit
+```
+
+This enables completions for `auth` and `check-version.py`.
+
+## Bash completions
+
+Bash completion scripts are provided in `completions/bash/`.
+
+To enable them for the current shell:
+
+```bash
+source "$PWD/completions/bash/auth"
+source "$PWD/completions/bash/check-version.py"
+```
+
+## PowerShell completions
+
+PowerShell completers are provided in `completions/powershell/`.
+
+To enable them for the current session:
+
+```powershell
+. "$PWD/completions/powershell/auth.ps1"
+. "$PWD/completions/powershell/check-version.py.ps1"
 ```
 
 ## macOS Touch ID helper

@@ -1,0 +1,12 @@
+#compdef check-version.py
+
+_arguments -s -S \
+  '(-h --help)'{-h,--help}'[display help text]' \
+  '--debug[enable debug output]' \
+  '--use-dots[output the version in dotted form]' \
+  '(-nm --no-message)'{-nm,--no-message}'[suppress anything other than the version]' \
+  '--show[display detected version information]' \
+  '(-s --silent)'{-s,--silent}'[suppress all messages and use exit code only]' \
+  '(-v --verbose)'{-v,--verbose}'[display more messages]' \
+  '1:version (X, X-Y, X-Y-Z, dotted forms):_message version' \
+  '*:message argument:_message message\ argument'

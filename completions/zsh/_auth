@@ -1,0 +1,25 @@
+#compdef auth
+
+local -a color_modes cache_times
+color_modes=(auto always never)
+cache_times=(0 15 30 60 120)
+
+_arguments -s -S \
+  '--cache-time=-[cache successful authorization for 0-120 seconds]:seconds:(${cache_times[@]})' \
+  '--change-password[change auth password using current password or burner]' \
+  '(-ck --check)'{-ck,--check}'[verify specified files are valid]' \
+  '--color[set color output mode]:when:(${color_modes[@]})' \
+  '(-d --dir)'{-d,--dir}'[specify database directory]:directory:_files -/' \
+  '(-f --force)'{-f,--force}'[reserved for future non-security confirmation prompts]' \
+  '(-h --help)'{-h,--help}'[display help text]' \
+  '(-q --quiet)'{-q,--quiet}'[report failures only]' \
+  '--request-password[require auth password or burner instead of platform authorization]' \
+  '--root-dir=-[store and check paths relative to this canonical root]:path:_files -/' \
+  '--show-dir[display auth storage paths; requires authorization]' \
+  '(-s --silent)'{-s,--silent}'[silent even with failure, useful in scripts]' \
+  '--stats[display database statistics; requires authorization]' \
+  '(-v --verbose)'{-v,--verbose}'[increase verbosity]' \
+  '--version[display version]' \
+  '(-wr --write)'{-wr,--write}'[authorize files; requires platform authorization or auth password]' \
+  '(-rm --remove)'{-rm,--remove}'[remove authorization; requires platform authorization or auth password]' \
+  '*:filename:_files'
