@@ -118,7 +118,7 @@ autoload -Uz compinit
 compinit
 ```
 
-This enables completions for `auth` and `check-version.py`.
+This enables completions for `auth`.
 
 ## Bash completions
 
@@ -128,7 +128,6 @@ To enable them for the current shell:
 
 ```bash
 source "$PWD/completions/bash/auth"
-source "$PWD/completions/bash/check-version.py"
 ```
 
 ## PowerShell completions
@@ -139,7 +138,6 @@ To enable them for the current session:
 
 ```powershell
 . "$PWD/completions/powershell/auth.ps1"
-. "$PWD/completions/powershell/check-version.py.ps1"
 ```
 
 ## macOS Touch ID helper
