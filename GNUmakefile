@@ -36,22 +36,22 @@ SBOM_PATH := ${GIT_WORK_PATH}/sbom/sbom.json
 #      A special call to the Test macro also goes to targets if in the TESTS makefile if it exists.
 TESTS = tests.mk # can be overridden
 help: # default target
-	@bin/make-help.bash ${THIS_MAKEFILE} ${TESTS}
+	@python3 bin/make-help.py ${THIS_MAKEFILE} ${TESTS}
 
 #.______________________________________________________________________________
 #| * version - check the version
 version:
-	check-version --show
+	python3 bin/check-version.py --show
 
 #.______________________________________________________________________________
 #| * unpack - extract version from archives
 unpack:
 	if [[ -n "${VERS}" ]]; then \
-          check-version "${VERS}"; \
-          unpack "$(check-version ${VERS})"; \
-        else \
-          unpack "$(check-version)" \
-        fi
+	          python3 bin/check-version.py "${VERS}"; \
+	          python3 bin/unpack.py "$(python3 bin/check-version.py ${VERS})"; \
+	        else \
+	          python3 bin/unpack.py "$(python3 bin/check-version.py)" \
+	        fi
 
 #.______________________________________________________________________________
 #| * validate - run stringent checks (Clippy) and all tests
@@ -60,13 +60,15 @@ validate:
 	cargo check
 	cargo clippy --all-targets --all-features -- -D warnings
 	cargo test --all-targets --all-features
-	date > validated.txt
-	uname -a >> validated.txt
+	echo "Validate completed" > validated.txt
+	date                     >> validated.txt
+	uname -a                 >> validated.txt
+	python3 bin/check-version.py --show >> validated.txt
 
 #.______________________________________________________________________________
 #| * upload - validate
 upload: validate
-	check-version ${VERS}
+	python3 bin/check-version.py ${VERS}
 	set -- ${VERS}; \
     if [[ $$# == 1 ]]; then \
       git commit -a; \
