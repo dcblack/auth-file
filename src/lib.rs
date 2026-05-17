@@ -4,8 +4,8 @@
 //! - `Write` and `Remove` may require user authorization.
 //! - `Check` verifies stored cryptographic records without prompting.
 //!
-//! Version 0.8.3 stores authorization records in `SQLite` and moves normal-use
-//! secret keys into the platform credential store. Version 0.8.3 adds an
+//! Version 0.8.6 stores authorization records in `SQLite` and moves normal-use
+//! secret keys into the platform credential store. Version 0.8.6 adds an
 //! Argon2id-protected auth password and one-time burner passwords for
 //! recovery when platform authorization is unavailable. Test databases named
 //! `auth-test` keep file-backed keys for CI and development only.
@@ -15,6 +15,7 @@
 #![deny(clippy::all)]
 #![warn(clippy::pedantic)]
 
+use age::secrecy::SecretString;
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use argon2::Argon2;
 use base64::engine::general_purpose::STANDARD as B64;
@@ -48,6 +49,7 @@ const PASSWORD_MAX_LEN: usize = 80;
 const PASSWORD_MIN_BITS: f64 = 90.0;
 const BURNER_COUNT: usize = 10;
 const BURNER_LEN: usize = 16;
+const BURNER_FILE: &str = "auth-burners.age";
 const AUTH_CACHE_MAX_SECONDS: u64 = 120;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -161,6 +163,11 @@ impl AuthReport {
 pub struct AuthStoragePaths {
     pub auth_dir: PathBuf,
     pub database: PathBuf,
+}
+
+#[derive(Debug, Clone)]
+pub struct AuthPasswordUpdate {
+    pub burner_file: PathBuf,
 }
 
 #[derive(Debug, Clone)]
@@ -478,7 +485,7 @@ impl DbKeys {
 /// Returns an error if the database cannot be opened, recovery is not
 /// configured, authentication fails, or the new password does not meet the
 /// local strength policy.
-pub fn change_fallback_password(options: &AuthOptions) -> Result<Vec<String>, AuthError> {
+pub fn change_fallback_password(options: &AuthOptions) -> Result<AuthPasswordUpdate, AuthError> {
     ensure_storage(&options.db_dir)?;
     let conn = open_database(&options.db_dir)?;
     let keys = DbKeys::load_or_create(&options.db_dir, &conn, false)?;
@@ -844,8 +851,8 @@ fn ensure_recovery_initialized(
         if password != confirm {
             return Err(AuthError::PasswordVerificationFailed);
         }
-        let burners = configure_recovery_password_with_password(conn, db_dir, keys, &password)?;
-        display_burner_passwords(db_dir, &burners);
+        let update = configure_recovery_password_with_password(conn, db_dir, keys, &password)?;
+        display_burner_file_message(db_dir, &update.burner_file);
         return Ok(());
     }
 
@@ -857,8 +864,8 @@ fn ensure_recovery_initialized(
         "Auth password setup is required for this new auth database: {}",
         absolute_database_dir(db_dir).display()
     );
-    let burners = configure_recovery_password(conn, db_dir, keys, false)?;
-    display_burner_passwords(db_dir, &burners);
+    let update = configure_recovery_password(conn, db_dir, keys, false)?;
+    display_burner_file_message(db_dir, &update.burner_file);
     Ok(())
 }
 
@@ -867,7 +874,7 @@ fn configure_recovery_password(
     db_dir: &Path,
     keys: &DbKeys,
     changing_existing: bool,
-) -> Result<Vec<String>, AuthError> {
+) -> Result<AuthPasswordUpdate, AuthError> {
     let prompt = if changing_existing {
         "New Auth password: "
     } else {
@@ -879,10 +886,10 @@ fn configure_recovery_password(
 
 fn configure_recovery_password_with_password(
     conn: &Connection,
-    _db_dir: &Path,
+    db_dir: &Path,
     keys: &DbKeys,
     password: &str,
-) -> Result<Vec<String>, AuthError> {
+) -> Result<AuthPasswordUpdate, AuthError> {
     validate_password_strength(password)?;
     let password_hash = hash_password(password)?;
     let burners = generate_burner_passwords();
@@ -928,7 +935,8 @@ fn configure_recovery_password_with_password(
             ],
         )?;
     }
-    Ok(burners)
+    let burner_file = write_burner_file_age(db_dir, password, &burners)?;
+    Ok(AuthPasswordUpdate { burner_file })
 }
 
 fn authorize_or_use_cache(
@@ -1306,15 +1314,57 @@ fn random_alphanumeric(len: usize) -> String {
     out
 }
 
-fn display_burner_passwords(db_dir: &Path, burners: &[String]) {
-    eprintln!("\nSave this information in a password manager.");
-    eprintln!("Database: {}", absolute_database_dir(db_dir).display());
-    eprintln!("Auth password: [the password you just entered]");
-    eprintln!("One-time burner passwords for auth password changes:");
+fn write_burner_file_age(
+    db_dir: &Path,
+    password: &str,
+    burners: &[String],
+) -> Result<PathBuf, AuthError> {
+    let path = db_dir.join(BURNER_FILE);
+    let plaintext = burner_file_plaintext(db_dir, burners);
+    let passphrase = SecretString::from(password.to_owned());
+    let recipient = age::scrypt::Recipient::new(passphrase);
+    let encrypted = age::encrypt(&recipient, plaintext.as_bytes())
+        .map_err(|e| AuthError::Recovery(e.to_string()))?;
+    fs::write(&path, encrypted)?;
+
+    #[cfg(unix)]
+    set_private_file_permissions(&path)?;
+
+    #[cfg(not(unix))]
+    set_private_file_permissions(&path);
+
+    Ok(path)
+}
+
+fn burner_file_plaintext(db_dir: &Path, burners: &[String]) -> String {
+    let mut text = String::new();
+    text.push_str("auth burner passwords\n");
+    text.push_str("=====================\n\n");
+    text.push_str("Database: ");
+    text.push_str(&absolute_database_dir(db_dir).to_string_lossy());
+    text.push('\n');
+    text.push_str("Created unix: ");
+    text.push_str(&unix_now().to_string());
+    text.push_str("\n\n");
+    text.push_str("Store these one-time burner passwords in a password manager.\n");
+    text.push_str("Each burner password may be used once where the Auth password is requested.\n");
+    text.push_str("If you forget the Auth password, this encrypted file cannot be decrypted.\n\n");
     for burner in burners {
-        eprintln!("  {burner}");
+        text.push_str(burner);
+        text.push('\n');
     }
-    eprintln!("These burners are not recoverable after this display.\n");
+    text
+}
+
+fn display_burner_file_message(db_dir: &Path, burner_file: &Path) {
+    eprintln!("\nRecovery burner passwords were written to an age-encrypted file:");
+    eprintln!("  {}", burner_file.display());
+    eprintln!("Database: {}", absolute_database_dir(db_dir).display());
+    eprintln!(
+        "Decrypt it with `rage -d {}` and store the burners in a password manager.",
+        burner_file.display()
+    );
+    eprintln!("If you forget the Auth password, this file cannot help you recover.\n");
 }
 
 fn current_machine_hash() -> String {

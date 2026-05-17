@@ -24,9 +24,24 @@ PHONIES := $(shell perl -lane 'print $$1 if m{^([a-zA-Z][-a-zA-Z0-9_]*):[^=]*$$}
 
 .DEFAULT_GOAL := help
 
-GIT_WORK_PATH := $(shell ${GIT_EXE} rev-parse --show-toplevel)
-DEV_TOOLS := ${GIT_WORK_PATH}/dev-tools
-SBOM_PATH := ${GIT_WORK_PATH}/sbom/sbom.json
+GIT_WORK_DIR   := $(shell ${GIT_EXE} rev-parse --show-toplevel)
+DEV_TOOLS      := ${GIT_WORK_DIR}/dev-tools
+ARTIFACTS      := ${GIT_WORK_DIR}/artifacts
+SBOM_DIR       := ${ARTIFACTS}/sbom
+SBOM_FILE      := auth-file.dx
+SBOM_FULLPATH  := ${SBOM_DIR}/${SBOM_FILE}.json
+AUDIT_DIR      := ${ARTIFACTS}/audit
+AUDIT_FULLPATH := ${AUDIT_DIR}/audit.txt
+
+# Special macros to add some color
+ifdef NOCOLOR
+  Warning=echo "$1"
+  Finished=echo "$1"
+else
+  Warning=printf "[1;93mWarning:[0m $1\n"
+  Finished=printf "[1;96mFinished:[0m $1\n"
+endif
+
 
 #.______________________________________________________________________________
 #| * help - display documentation
@@ -55,35 +70,80 @@ unpack:
 	        fi
 
 #.______________________________________________________________________________
-#| * validate - run stringent checks (Clippy) and all tests
-validate:
+#| * fmt - cargo format 
+fmt:
 	cargo fmt --all
-	cargo check
-	cargo clippy --all-targets --all-features -- -D warnings
-	cargo test --all-targets --all-features
-	echo "Validate completed" > validated.txt
-	date                     >> validated.txt
-	uname -a                 >> validated.txt
-	python3 ${DEV_TOOLS}/check-version.py --show >> validated.txt
+	@$(call Finished,Formatted)
 
 #.______________________________________________________________________________
-#| * upload - validate
-upload: validate
+#| * check - basic syntax and rust compiler requirements
+check:
+	cargo check
+	@$(call Finished,Check passed)
+
+#.______________________________________________________________________________
+#| * clippy - deep static analysis
+clippy:
+	cargo clippy --all-targets --all-features -- -D warnings
+	@$(call Finished,Clippy passed)
+
+#.______________________________________________________________________________
+#| * test - basic cargo tests
+test:
+	cargo test --all-targets --all-features
+	@$(call Finished,Test complete)
+
+#.______________________________________________________________________________
+#| * verify - run all tests
+verify: fmt check clippy test
+	@echo "Verification complete" > verified.txt; \
+	date                     >> verified.txt; \
+	uname -a                 >> verified.txt; \
+	python3 ${DEV_TOOLS}/check-version.py --show >> verified.txt
+	@$(call Finished,Verification complete)
+
+#.______________________________________________________________________________
+#| * upload - commit to GitHub
+upload: verify
 	python3 ${DEV_TOOLS}/check-version.py ${VERS}
 	set -- ${VERS}; \
-    if [[ $$# == 1 ]]; then \
-      git commit -a; \
-      git tag -a -s "v${VERS}"; \
-    else \
-      git commit -a -m "${VERS}"; \
-      git tag -a -s -m "${VERS}" "v$(firstword ${VERS})"; \
-    fi
+        if [[ $$# == 1 ]]; then \
+          git commit -a; \
+          git tag -a -s "v$$1"; \
+        else \
+          git commit -a -m "$$1"; \
+          git tag -a -s -m "$$1" "v$(firstword $$1)"; \
+        fi
 	git push
+
+#.______________________________________________________________________________
+#| * release - compile a release version
+release:
+	cargo build --release
+
+#.______________________________________________________________________________
+#| * ci - run continuous integration tests
+ci:
+	@echo "TODO: Not yet implemented"
+#.______________________________________________________________________________
+#| * audit - run a security audit
+audit:
+	mkdir -p '${AUDIT_DIR}'
+	cargo audit 2>&1 | tee ${AUDIT_FULLPATH}
+	@$(call Finished,Created ${AUDIT_FULLPATH})
 
 #.______________________________________________________________________________
 #| * sbom - create a software bill of materials
 sbom:
-	cargo cyclonedx --format json > ${SBOM_PATH}
+	@$(call Warning,TODO: sbom is not yet complete)
+	cargo cyclonedx --verbose \
+                        --target all \
+                        --all \
+                        --format json \
+                        --override-filename ${SBOM_FILE}
+	mkdir -p '${SBOM_DIR}'
+	mv '${SBOM_FILE}.json' '${SBOM_DIR}'/
+	@$(call Finished,Created ${SBOM_FULLPATH})
 
 ifneq ("$(wildcard ${TESTS})","")
   include ${TESTS}

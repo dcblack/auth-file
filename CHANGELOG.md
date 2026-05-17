@@ -6,6 +6,22 @@ The format is based on Keep a Changelog, and this project aims to follow Semanti
 
 
 
+## [0.8.6] - 2026-05-16
+
+### Added
+
+- Added standard age-format encrypted burner password file output at `auth-burners.age`.
+- Added documentation telling users to install `rage` from crates.io with `cargo install rage` to decrypt burner files.
+
+### Changed
+
+- Burner passwords are no longer printed directly to the terminal by default.
+- Auth password rotation now reports the encrypted burner file path instead of dumping recovery secrets into terminal scrollback.
+
+### Security
+
+- Reduces exposure of burner passwords through terminal scrollback, logs, screen sharing, and remote shells.
+
 
 ## [0.8.5] - 2026-05-15
 

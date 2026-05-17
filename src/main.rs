@@ -240,17 +240,15 @@ fn finalize_cli_state(state: &mut CliState) -> Result<bool, String> {
 
 fn change_password(state: &CliState) -> Result<bool, String> {
     reject_file_operands(state, "--change-password")?;
-    let burners = change_fallback_password(&state.options).map_err(|e| e.to_string())?;
+    let update = change_fallback_password(&state.options).map_err(|e| e.to_string())?;
     eprintln!(
         "{}",
         state.options.colorize_warning(
-            "CRITICAL: Save these one-time burner passwords in a password manager. They will not be shown again."
+            "CRITICAL: Burner passwords were written to an age-encrypted file. Decrypt it and store them somewhere safe."
         )
     );
-    eprintln!("Database: {}", state.options.db_dir.display());
-    for burner in burners {
-        eprintln!("  {burner}");
-    }
+    eprintln!("Burner file: {}", update.burner_file.display());
+    eprintln!("If you forget the Auth password, this file cannot help you recover.");
     Ok(true)
 }
 

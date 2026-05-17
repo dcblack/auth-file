@@ -6,13 +6,13 @@ The published crate name is currently set to `auth-file` because the crate name 
 
 ## Status
 
-Version: `0.7.0`
+Version: `0.8.6`
 
 This is a development implementation intended for review and platform testing.
 
 ## Auth password recovery
 
-Normal databases can establish an auth password and ten one-time burner passwords. The auth password is stored as an Argon2id password hash. A backup copy of the database key material is encrypted with a key derived from the auth password. Burner passwords are intended only for changing the auth password. Store the auth password, burners, and full database path in a password manager.
+Normal databases can establish an Auth password and ten one-time burner passwords. The Auth password is stored as an Argon2id password hash. A backup copy of the database key material is encrypted with a key derived from the Auth password. Burner passwords can authorize recovery operations exactly once. To avoid terminal scrollback exposure, generated burner passwords are written to an age-encrypted file named `auth-burners.age` inside the auth directory instead of being printed directly.
 
 Use:
 
@@ -21,6 +21,25 @@ auth --change-password --dir ~/.auth
 ```
 
 The recovery metadata includes an advisory machine identifier. If the database is copied to a different machine, the auth password may be required to restore the keys into that machine’s credential store.
+
+### Burner password file
+
+When `auth` creates or rotates recovery material, it writes the generated burner passwords to:
+
+```text
+.auth/auth-burners.age
+```
+
+This file is encrypted with the Auth password using the age file format. Decrypt it, then store the burner passwords somewhere durable, preferably a password manager.
+
+Using `rage`:
+
+```bash
+cargo install rage
+rage -d ~/.auth/auth-burners.age > auth-burners.txt
+```
+
+The `rage` crate is published at <https://crates.io/crates/rage>. If you forget the Auth password, this encrypted burner file will not help because it is protected by that same Auth password.
 
 ## Security model
 
@@ -43,12 +62,12 @@ The database stores:
 
 ## Supported platforms
 
-| Platform     |       Status | Authorization backend                                           |
-|--------------|-------------:|-----------------------------------------------------------------|
-| macOS Tahoe  |  test target | Touch ID / password fallback through LocalAuthentication helper |
-| Windows 11   |  test target | Windows Hello through `UserConsentVerifier`                     |
-| Ubuntu 24.04 |  test target | PAM through `sudo -v` fallback                                  |
-| Other Linux  | experimental | PAM through `sudo -v` fallback                                  |
+| Platform | Status | Authorization backend |
+|---|---:|---|
+| macOS Tahoe | test target | Touch ID / password fallback through LocalAuthentication helper |
+| Windows 11 | test target | Windows Hello through `UserConsentVerifier` |
+| Ubuntu 24.04 | test target | PAM through `sudo -v` fallback |
+| Other Linux | experimental | PAM through `sudo -v` fallback |
 
 See `docs/platform-support.md` for details.
 
@@ -104,40 +123,6 @@ pub fn auth_report(
 
 ```bash
 cargo build --release
-```
-
-## Zsh completions
-
-Zsh completion functions are provided in `completions/zsh/`.
-
-To enable them for the current user:
-
-```zsh
-fpath=("$PWD/completions/zsh" $fpath)
-autoload -Uz compinit
-compinit
-```
-
-This enables completions for `auth`.
-
-## Bash completions
-
-Bash completion scripts are provided in `completions/bash/`.
-
-To enable them for the current shell:
-
-```bash
-source "$PWD/completions/bash/auth"
-```
-
-## PowerShell completions
-
-PowerShell completers are provided in `completions/powershell/`.
-
-To enable them for the current session:
-
-```powershell
-. "$PWD/completions/powershell/auth.ps1"
 ```
 
 ## macOS Touch ID helper
