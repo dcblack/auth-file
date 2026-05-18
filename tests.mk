@@ -1,4 +1,5 @@
 #!gmake -f
+# -*- make -*- vim:syntax=make:sw=2:et:nospell
 
 #< Simple commands to test
 #< -----------------------
@@ -45,66 +46,275 @@
 #< | Variable             | Aspects to test
 #< | ------               | -------
 #< | AUTH_OPTIONS         | various, empty
+#< | AUTH_TEST_FALLBACK_PASSWORD | test-only first-run fallback password
+#< | AUTH_TEST_FALLBACK_PASSWORD_CONFIRM | confirmation for first-run fallback password
+#< | AUTH_TEST_CURRENT_PASSWORD_OR_BURNER | later fallback/burner authorization
 #< | NO_COLOR             | defined
 #< | NOCOLOR              | defined
-#< | PAGER                | glow, less, empty
+#< | PAGER                | less, more, cat, empty
 #<
 
-TEST_DIR := /tmp/auth
-AUTH_DIR := ${TEST_DIR}/dbdir
-ROOT_DIR := ${TEST_DIR}/root
-FILES    := file1 file2 file3 file4 file5
+# These targets intentionally exercise the installed/current auth binary rather
+# than Cargo integration tests. Override AUTH to test a different binary:
+#
+#   make test-all AUTH=/path/to/auth
+#
+AUTH       ?= ${GIT_WORK_DIR}/target/debug/auth
+GOLD_DIR   = ${GIT_WORK_DIR}/golden
+TEST_DIR   = /tmp/auth-file-manual-tests
+AUTH_DIR   = ${TEST_DIR}/auth-test
+ROOT_DIR   = ${TEST_DIR}/root
+COPY_ROOT  = ${TEST_DIR}/root-copy
+ART_DIR    = ${ARTIFACTS}/manual-tests
+TEST_PASS  = Long-Test-Password-2026!
+BAD_PASS   = Wrong-Test-Password-2026!
+FILES      = file1 file2 file3 file4 file5
 
+AUTH_ENV = AUTH_OPTIONS="-d ${AUTH_DIR}" \
+           AUTH_TEST_FALLBACK_PASSWORD="${TEST_PASS}" \
+           AUTH_TEST_FALLBACK_PASSWORD_CONFIRM="${TEST_PASS}" \
+           AUTH_TEST_CURRENT_PASSWORD_OR_BURNER="${TEST_PASS}"
+
+ROOT_AUTH_ENV = AUTH_OPTIONS="-d ${AUTH_DIR} --root-dir=${ROOT_DIR}" \
+                AUTH_TEST_FALLBACK_PASSWORD="${TEST_PASS}" \
+                AUTH_TEST_FALLBACK_PASSWORD_CONFIRM="${TEST_PASS}" \
+                AUTH_TEST_CURRENT_PASSWORD_OR_BURNER="${TEST_PASS}"
+
+ifdef NOCOLOR
+  RED:=
+  GRN:=
+  YLW:=
+  BLU:=
+  MAG:=
+  CYN:=
+  OFF:=
+else
+  RED:=[1;91m
+  GRN:=[1;92m
+  YLW:=[1;93m
+  BLU:=[1;94m
+  MAG:=[1;95m
+  CYN:=[1;96m
+  OFF:=[0m
+endif
 RULER := ------------------------------------------------------------
-Prompt=printf "[1;92m%% [0m"
-Test=printf "[1;94m${RULER}\nTest:[2;96m $1[0m\n"
+Prompt=printf "${CYN}%% ${OFF}"
+Test=printf "${BLU}${RULER}\nTest:${CYN} $1${OFF}\n"
+Passed=printf "${GRN}Test passed:${CYN} $1${OFF}\n"
+ExpectFailed=printf "${RED}Error:${OFF} $1\n" >&2
+ExpectPassed=printf "${GRN}Success: expected failure - ${OFF} $1\n"
+Gold_test=$(if $(wildcard ${GOLD_DIR}/$1),cmp $1 $2,@printf "${YLW}Missing golden file: ${OFF}$1\n")
+
+.PHONY: test-all test-clear test-setup test-version test-help test-write-check \
+        test-remove test-missing test-cache test-cache-reject test-request-password \
+        test-bad-password test-show-dir test-stats test-root-dir test-color \
+        test-auth-options test-summary
 
 #.______________________________________________________________________________
-#| * test-all - run all the tests
-test-all: test-clear test-setup test1 test2 test3
+#| * golden - create golden files [use only when you are certain]
+golden:
+	@$(call Test,Create golden files)
+	@$(call Prompt)
+	mkdir -p ${GOLD_DIR}
+	@$(call Prompt)
+	"${AUTH}" --version > ${GOLD_DIR}/version.txt
+	@$(call Prompt)
+	PAGER=cat "${AUTH}" --help >"${GOLD_DIR}/help.txt"
 
+#.______________________________________________________________________________
+#| * test-all - run all manual CLI tests
+test-all: test-clear test-setup test-version test-help test-write-check test-remove \
+          test-missing test-cache test-cache-reject test-request-password \
+          test-bad-password test-show-dir test-stats test-root-dir test-color \
+          test-auth-options test-summary
+
+#.______________________________________________________________________________
+#| * test-clear - remove manual test directories and artifacts
+test-clear:
+	@$(call Test,Remove database and all manual test files)
+	@$(call Prompt)
+	rm -fr "${TEST_DIR}" # remove database
+	@$(call Prompt)
+	rm -fr "${ART_DIR}" # remove manual artifacts
+	@$(call Prompt)
+	mkdir -p "${ART_DIR}"
+
+#.______________________________________________________________________________
+#| * test-setup - build auth and create deterministic test files
 test-setup:
 	@$(call Test,Set up)
 	@$(call Prompt)
-	mkdir -p "${ROOT_DIR}"
+	cargo build
 	@$(call Prompt)
-	for f in ${FILES}; do\
-	  rand >${TEST_DIR}/$$f;\
-	  rand >${ROOT_DIR}/rel-$$f;\
+	mkdir -p "${AUTH_DIR}" "${ROOT_DIR}" "${COPY_ROOT}"
+	@$(call Prompt)
+	for f in ${FILES}; do \
+	  printf "manual test content for $$f\n" >"${TEST_DIR}/$$f"; \
+	  printf "rooted manual test content for $$f\n" >"${ROOT_DIR}/rel-$$f"; \
 	done
 	@$(call Prompt)
-	cd ${TEST_DIR}; echo "hello" >file0; auth --write file0
+	cp -R "${ROOT_DIR}/." "${COPY_ROOT}/"
 
-test-clear:
-	@$(call Test,Remove database and all files)
-	@$(call Prompt)
-	rm -fr "${ROOT_DIR}"
-test1:
+#.______________________________________________________________________________
+#| * test-version - test --version
+test-version:
 	@$(call Test,Version)
 	@$(call Prompt)
-	auth --version
+	"${AUTH}" --version | tee ${ART_DIR}/version.txt
+	$(call Gold_test,"version.txt","${ART_DIR}/version.txt")
 
-test2:
+#.______________________________________________________________________________
+#| * test-help - test --help and -h
+test-help:
 	@$(call Test,Help)
 	@$(call Prompt)
-	auth --help
+	PAGER=cat "${AUTH}" --help >"${ART_DIR}/help-long.txt"
+	@$(call Prompt)
+	PAGER=cat "${AUTH}" -h >"${ART_DIR}/help-short.txt"
+	@$(call Prompt)
+	cmp "${ART_DIR}/help-long.txt" "${ART_DIR}/help-short.txt"
+	$(call Gold_test,"help.txt","${ART_DIR}/help-long.txt")
 
-test3:
+#.______________________________________________________________________________
+#| * test-write-check - write and check several files
+test-write-check:
 	@$(call Test,Write and check several files)
 	@$(call Prompt)
-	auth --write ${TEST_DIR}/file1
+	${AUTH_ENV} "${AUTH}" --request-password --write "${TEST_DIR}/file1" "${TEST_DIR}/file2"
 	@$(call Prompt)
-	cd ${TEST_DIR} && auth --write file2
-	# Make sure location doesn't matter
+	${AUTH_ENV} "${AUTH}" --check "${TEST_DIR}/file1" "${TEST_DIR}/file2"
 	@$(call Prompt)
-	auth --check ${TEST_DIR}/file2
-	@$(call Prompt)
-	cd ${TEST_DIR} && auth --check file1
+	cd "${TEST_DIR}" && ${AUTH_ENV} "${AUTH}" -ck file1 file2
 
-test4:
-	@$(call Attempt to reauthorize file1)
-	cd ${TEST_DIR} && auth --check file1
+#.______________________________________________________________________________
+#| * test-remove - remove one authorization and confirm it fails check
+test-remove:
+	@$(call Test,Remove one authorized file)
 	@$(call Prompt)
-	auth --write ${TEST_DIR}/file1
+	${AUTH_ENV} "${AUTH}" --request-password --write "${TEST_DIR}/file3"
+	@$(call Prompt)
+	${AUTH_ENV} "${AUTH}" --request-password --remove "${TEST_DIR}/file3"
+	@$(call Prompt)
+	if ${AUTH_ENV} "${AUTH}" --check "${TEST_DIR}/file3"; then \
+	  $(call ExpectPassed,Expected removed file check to fail); \
+	  exit 1; \
+	else \
+	  $(call ExpectFailed,removed file no longer checks); \
+	fi
 
-#TAF!
+#.______________________________________________________________________________
+#| * test-missing - check unauthorized and nonexistent files
+test-missing:
+	@$(call Test,Unauthorized and nonexistent files)
+	@$(call Prompt)
+	if ${AUTH_ENV} "${AUTH}" --check "${TEST_DIR}/file4"; then \
+	  $(call ExpectPassed,Expected unauthorized file check to fail); \
+	  exit 1; \
+	else \
+	  $(call ExpectFailed,unauthorized file rejected); \
+	fi
+	@$(call Prompt)
+	if ${AUTH_ENV} "${AUTH}" --check "${TEST_DIR}/does-not-exist"; then \
+	  $(call ExpectPassed,Expected missing file check to fail); \
+	  exit 1; \
+	else \
+	  $(call ExpectFailed,nonexistent file rejected); \
+	fi
+
+#.______________________________________________________________________________
+#| * test-cache - verify --cache-time=60 avoids repeated authorization prompts
+test-cache:
+	@$(call Test,Authorization cache)
+	@$(call Prompt)
+	${AUTH_ENV} "${AUTH}" --request-password --cache-time=60 --write "${TEST_DIR}/file4"
+	@$(call Prompt)
+	AUTH_OPTIONS="-d ${AUTH_DIR}" AUTH_TEST_CURRENT_PASSWORD_OR_BURNER="${BAD_PASS}" \
+	  "${AUTH}" --request-password --cache-time=60 --write "${TEST_DIR}/file5"
+
+#.______________________________________________________________________________
+#| * test-cache-reject - verify --cache-time rejects values above 120
+test-cache-reject:
+	@$(call Test,Reject --cache-time=121)
+	@$(call Prompt)
+	if ${AUTH_ENV} "${AUTH}" --request-password --cache-time=121 --write "${TEST_DIR}/file1"; then \
+	  $(call ExpectPassed,Expected --cache-time=121 to fail); \
+	  exit 1; \
+	else \
+	  $(call ExpectFailed,--cache-time=121 rejected); \
+	fi
+
+#.______________________________________________________________________________
+#| * test-request-password - force password route explicitly
+test-request-password:
+	@$(call Test,Request password route)
+	@$(call Prompt)
+	${AUTH_ENV} "${AUTH}" --request-password --write "${TEST_DIR}/file1"
+
+#.______________________________________________________________________________
+#| * test-bad-password - wrong password should fail when no cache is present
+test-bad-password:
+	@$(call Test,Bad auth password)
+	@$(call Prompt)
+	AUTH_OPTIONS="-d ${AUTH_DIR}" AUTH_TEST_CURRENT_PASSWORD_OR_BURNER="${BAD_PASS}" \
+	  if "${AUTH}" --request-password --cache-time=0 --write "${TEST_DIR}/file1"; then \
+	    $(call ExpectPassed,Expected bad password to fail); \
+	    exit 1; \
+	  else \
+	    $(call ExpectFailed,bad auth password rejected); \
+	  fi
+
+#.______________________________________________________________________________
+#| * test-show-dir - authorized --show-dir
+test-show-dir:
+	@$(call Test,Show directory)
+	@$(call Prompt)
+	${AUTH_ENV} "${AUTH}" --request-password --show-dir >"${ART_DIR}/show-dir.txt"
+	@$(call Prompt)
+	cat "${ART_DIR}/show-dir.txt"
+
+#.______________________________________________________________________________
+#| * test-stats - authorized --stats
+test-stats:
+	@$(call Test,Stats)
+	@$(call Prompt)
+	${AUTH_ENV} "${AUTH}" --request-password --stats >"${ART_DIR}/stats.txt"
+	@$(call Prompt)
+	cat "${ART_DIR}/stats.txt"
+
+#.______________________________________________________________________________
+#| * test-root-dir - root-relative identity works across copied roots
+test-root-dir:
+	@$(call Test,Root-relative portable identity)
+	@$(call Prompt)
+	${ROOT_AUTH_ENV} "${AUTH}" --request-password --write "${ROOT_DIR}/rel-file1"
+	@$(call Prompt)
+	AUTH_OPTIONS="-d ${AUTH_DIR} --root-dir=${COPY_ROOT}" \
+	AUTH_TEST_CURRENT_PASSWORD_OR_BURNER="${TEST_PASS}" \
+	  "${AUTH}" --request-password --check "${COPY_ROOT}/rel-file1"
+
+#.______________________________________________________________________________
+#| * test-color - color modes and NO_COLOR/NOCOLOR
+test-color:
+	@$(call Test,Color options)
+	@$(call Prompt)
+	${AUTH_ENV} "${AUTH}" --color always --check "${TEST_DIR}/file1" 2>"${ART_DIR}/color-always.err" || true
+	@$(call Prompt)
+	NO_COLOR=1 ${AUTH_ENV} "${AUTH}" --color auto --check "${TEST_DIR}/file1" 2>"${ART_DIR}/color-nocolor.err" || true
+	@$(call Prompt)
+	NOCOLOR=1 ${AUTH_ENV} "${AUTH}" --color auto --check "${TEST_DIR}/file1" 2>"${ART_DIR}/color-nocolor-legacy.err" || true
+
+#.______________________________________________________________________________
+#| * test-auth-options - AUTH_OPTIONS supplies directory and root options
+test-auth-options:
+	@$(call Test,AUTH_OPTIONS)
+	@$(call Prompt)
+	AUTH_OPTIONS="-d ${AUTH_DIR} --root-dir=${ROOT_DIR}" \
+	AUTH_TEST_CURRENT_PASSWORD_OR_BURNER="${TEST_PASS}" \
+	  "${AUTH}" --request-password --check "${ROOT_DIR}/rel-file1"
+
+#.______________________________________________________________________________
+#| * test-summary - summarize manual test artifacts
+test-summary:
+	@$(call Test,Manual test artifacts)
+	@$(call Prompt)
+	find "${ART_DIR}" -maxdepth 1 -type f -print | sort
