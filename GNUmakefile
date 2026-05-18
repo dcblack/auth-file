@@ -96,16 +96,16 @@ test:
 #.______________________________________________________________________________
 #| * verify - run all tests
 verify: fmt check clippy test
-	@echo "Verification complete" > verified.txt; \
-	date                     >> verified.txt; \
-	uname -a                 >> verified.txt; \
-	python3 ${DEV_TOOLS}/check-version.py --show >> verified.txt
+	@echo "Verification complete" > "${ARTIFACTS}/verified.txt"; \
+	date                     >> "${ARTIFACTS}/verified.txt"; \
+	uname -a                 >> "${ARTIFACTS}/verified.txt"; \
+	python3 ${DEV_TOOLS}/check-version.py --show >> "${ARTIFACTS}/verified.txt"
 	@$(call Finished,Verification complete)
 
 #.______________________________________________________________________________
 #| * upload - commit to GitHub
 upload: verify
-	python3 ${DEV_TOOLS}/check-version.py ${VERS}
+	"${ARTIFACTS}/python3 ${DEV_TOOLS}/check-version.py ${VERS}
 	set -- ${VERS}; \
         if [[ $$# == 1 ]]; then \
           git commit -a; \
