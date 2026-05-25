@@ -31,7 +31,8 @@
 #< | --quiet, -q          | shortcut
 #< | --remove, -rm        | authorized, shortcut
 #< | --request-password   | bad, burner, reuse burner
-#< | --root-dir=PATH      | valid dir, not dir, bad path
+#< | --default-root       | once only, conflicts with --root-dir
+#< | --root-dir=PATH      | valid dir, not dir, bad path, duplicate rejection
 #< | --show-dir           | authorized
 #< | --silent, -s         | shortcut
 #< | --stats              | authorized
@@ -107,7 +108,7 @@ Gold_test=$(if $(wildcard ${GOLD_DIR}/$1),cmp $1 $2,@printf "${YLW}Missing golde
 
 .PHONY: test-all test-clear test-setup test-version test-help test-write-check \
         test-remove test-missing test-cache test-cache-reject test-request-password \
-        test-bad-password test-show-dir test-stats test-root-dir test-color \
+        test-bad-password test-show-dir test-stats test-root-dir test-root-directives test-color \
         test-auth-options test-summary
 
 #.______________________________________________________________________________
@@ -125,7 +126,7 @@ golden:
 #| * test-all - run all manual CLI tests
 test-all: test-clear test-setup test-version test-help test-write-check test-remove \
           test-missing test-cache test-cache-reject test-request-password \
-          test-bad-password test-show-dir test-stats test-root-dir test-color \
+          test-bad-password test-show-dir test-stats test-root-dir test-root-directives test-color \
           test-auth-options test-summary
 
 #.______________________________________________________________________________
@@ -318,3 +319,25 @@ test-summary:
 	@$(call Test,Manual test artifacts)
 	@$(call Prompt)
 	find "${ART_DIR}" -maxdepth 1 -type f -print | sort
+
+
+#.______________________________________________________________________________
+#| * test-root-directives - root directive hardening smoke tests
+test-root-directives:
+	@$(call Test,Root directive hardening)
+	@$(call Prompt)
+	${AUTH_ENV} "${AUTH}" --default-root --check "${TEST_DIR}/file1" || true
+	@$(call Prompt)
+	if ${AUTH_ENV} "${AUTH}" --default-root --root-dir=${ROOT_DIR} --check "${TEST_DIR}/file1"; then \
+	  $(call ExpectPassed,Expected duplicate root directives to fail); \
+	  exit 1; \
+	else \
+	  $(call ExpectFailed,duplicate root directives rejected); \
+	fi
+	@$(call Prompt)
+	if AUTH_OPTIONS="-d ${AUTH_DIR} --default-root" "${AUTH}" --root-dir=${ROOT_DIR} --check "${TEST_DIR}/file1"; then \
+	  $(call ExpectPassed,Expected AUTH_OPTIONS plus CLI root directive to fail); \
+	  exit 1; \
+	else \
+	  $(call ExpectFailed,AUTH_OPTIONS plus CLI root directive rejected); \
+	fi

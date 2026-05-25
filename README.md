@@ -280,11 +280,11 @@ Options in help are alphabetized. `--cache-time` now requires equals syntax, for
 
 ### Root-relative path identity
 
-Use `--root-dir=PATH` when a set of files should be authorized by their path relative to a canonical root directory rather than by their full absolute path. This is useful for packaged or copied trees where the same relative file layout may live under different parent directories.
+Use `--default-root` to explicitly select the normal full-path identity behavior. Use `--root-dir=PATH` when a set of files should be authorized by their path relative to a canonical root directory rather than by their full absolute path. This is useful for packaged or copied trees where the same relative file layout may live under different parent directories.
 
 ```bash
 auth --request-password --root-dir=/path/to/tree --write /path/to/tree/bin/tool
 auth --root-dir=/other/copy/of/tree --check /other/copy/of/tree/bin/tool
 ```
 
-Use `--root-dir=` to return to full-path identity when supplying options through `AUTH_OPTIONS`.
+`--root-dir=PATH` and `--default-root` are root directives. At most one root directive may appear across `AUTH_OPTIONS` and command-line arguments. A second root directive fails with `Error: Attempt to specify root directory more than once.`

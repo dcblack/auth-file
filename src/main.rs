@@ -33,22 +33,27 @@ Options
 -------
 
   --cache-time=SECONDS       Cache successful authorization for 0-120 seconds [default: 0]
-  --change-password          Change auth password using current password or burner
+  --change-password          Change auth password using current password or burner[^2]
   --check, -ck               Verify specified files are valid
   --color WHEN               Color output: auto, always, never [default: auto]
+  --default-root             Use default full-path file identity
   --dir DIR, -d DIR          Specify database directory [default: ~/.auth]
   --force, -f                Reserved for future non-security confirmation prompts
   --help, -h                 Display this text using a pager when interactive
   --quiet, -q                Report failures only
-  --remove, -rm              Remove authorization; requires platform authorization or auth password
+  --remove, -rm              Remove authorization[^1]
   --request-password         Require Auth password/burner instead of platform authorization
-  --root-dir=PATH          Store/check paths relative to this canonical root
-  --show-dir                 Display auth storage paths; requires authorization
+  --root-dir=PATH            Store/check paths relative to this canonical root
+  --show-dir                 Display auth storage paths[^2]
   --silent, -s               Silent even with failure, useful in scripts
-  --stats                    Display database statistics; requires authorization
+  --stats                    Display database statistics[^2]
   --verbose, -v              Increase verbosity
   --version                  Display version
-  --write, -wr               Authorize files; requires platform authorization or auth password
+  --write, -wr               Authorize files[^1]
+
+[^1]: Requires platform authorization or a valid cached authorization session.
+
+[^2]: Requires platform authorization, cached authorization session, or Auth password.
 
 Environment
 -----------
@@ -72,6 +77,7 @@ Compatibility
     auth --write a.txt b.txt
     auth --check a.txt b.txt
     auth --request-password --cache-time=60 --root-dir=. --write a.txt b.txt
+    auth --default-root --check a.txt
 
 Exit Status
 -----------
@@ -88,6 +94,8 @@ enum CommandMode {
     ShowDir,
     Stats,
 }
+
+const ROOT_SPECIFIED_MORE_THAN_ONCE: &str = "Attempt to specify root directory more than once.";
 
 fn main() -> ExitCode {
     match run() {
@@ -135,6 +143,7 @@ struct CliState {
     overall_ok: bool,
     current_files: Vec<String>,
     mode: CommandMode,
+    root_directive_seen: bool,
 }
 
 impl Default for CliState {
@@ -145,6 +154,7 @@ impl Default for CliState {
             overall_ok: true,
             current_files: Vec::new(),
             mode: CommandMode::FileActions,
+            root_directive_seen: false,
         }
     }
 }
@@ -173,6 +183,10 @@ fn parse_one_arg(args: &[String], i: &mut usize, state: &mut CliState) -> Result
                 .ok_or_else(|| "missing value after --color".to_string())?;
             state.options.color = parse_color_mode(mode)?;
         }
+        "--default-root" => {
+            note_root_directive(state)?;
+            state.options.root_dir = None;
+        }
         "-d" | "--dir" => {
             *i += 1;
             let dir = args
@@ -185,6 +199,7 @@ fn parse_one_arg(args: &[String], i: &mut usize, state: &mut CliState) -> Result
         "-q" | "--quiet" => state.options.verbose = 0,
         "--request-password" => state.options.authorization = AuthorizationMode::Password,
         unknown if unknown.starts_with("--root-dir=") => {
+            note_root_directive(state)?;
             let Some((_, root)) = unknown.split_once('=') else {
                 return Err("--root-dir requires --root-dir=PATH syntax".to_string());
             };
@@ -210,6 +225,14 @@ fn parse_one_arg(args: &[String], i: &mut usize, state: &mut CliState) -> Result
         unknown if unknown.starts_with('-') => return Err(format!("unknown option {unknown}")),
         filename => state.current_files.push(filename.to_string()),
     }
+    Ok(())
+}
+
+fn note_root_directive(state: &mut CliState) -> Result<(), String> {
+    if state.root_directive_seen {
+        return Err(ROOT_SPECIFIED_MORE_THAN_ONCE.to_string());
+    }
+    state.root_directive_seen = true;
     Ok(())
 }
 

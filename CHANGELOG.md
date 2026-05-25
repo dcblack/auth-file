@@ -6,6 +6,19 @@ The format is based on Keep a Changelog, and this project aims to follow Semanti
 
 
 
+## [0.8.7] - 2026-05-18
+
+### Added
+
+- Added `--default-root` to explicitly select default full-path file identity.
+- Added duplicate root-directive detection across `AUTH_OPTIONS` and command-line arguments.
+- Added CLI tests for `--default-root`, `--root-dir=PATH`, duplicate root directives, `AUTH_OPTIONS`, and implicit default-root behavior.
+
+### Changed
+
+- Root directives are now strict: `--root-dir=PATH` and `--default-root` may be specified at most once total. A second root directive reports `Error: Attempt to specify root directory more than once.`
+
+
 ## [0.8.6] - 2026-05-16
 
 ### Added

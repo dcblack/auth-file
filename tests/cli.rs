@@ -27,7 +27,8 @@ fn help_option_works() {
         .stdout(predicate::str::contains("auth --write"))
         .stdout(predicate::str::contains("--version"))
         .stdout(predicate::str::contains("--no-platform-auth").not())
-        .stdout(predicate::str::contains("--cache-time"));
+        .stdout(predicate::str::contains("--cache-time"))
+        .stdout(predicate::str::contains("--default-root"));
 }
 
 #[test]
@@ -420,4 +421,251 @@ fn color_always_colors_errors_and_no_color_disables_auto() {
         .failure()
         .stderr(predicate::str::contains("Error:"))
         .stderr(predicate::str::contains("\u{1b}[31m").not());
+}
+
+#[test]
+fn default_root_once_on_command_line_passes() {
+    let tmp = tempdir().unwrap();
+    let db = tmp.path().join("auth-test");
+    let file = tmp.path().join("default-root.txt");
+    fs::write(&file, "contents\n").unwrap();
+
+    auth_cmd()
+        .args([
+            "--dir",
+            path_str(&db),
+            "--request-password",
+            "--default-root",
+            "--write",
+            path_str(&file),
+        ])
+        .assert()
+        .success();
+
+    auth_cmd()
+        .args([
+            "--dir",
+            path_str(&db),
+            "--default-root",
+            "--check",
+            path_str(&file),
+        ])
+        .assert()
+        .success();
+}
+
+#[test]
+fn root_dir_once_on_command_line_passes() {
+    let tmp = tempdir().unwrap();
+    let db = tmp.path().join("auth-test");
+    let root = tmp.path().join("root");
+    let file = root.join("file.txt");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(&file, "contents\n").unwrap();
+    let root_arg = format!("--root-dir={}", path_str(&root));
+
+    auth_cmd()
+        .args([
+            "--dir",
+            path_str(&db),
+            "--request-password",
+            root_arg.as_str(),
+            "--write",
+            path_str(&file),
+        ])
+        .assert()
+        .success();
+
+    auth_cmd()
+        .args([
+            "--dir",
+            path_str(&db),
+            root_arg.as_str(),
+            "--check",
+            path_str(&file),
+        ])
+        .assert()
+        .success();
+}
+
+#[test]
+fn duplicate_root_dir_on_command_line_fails() {
+    let tmp = tempdir().unwrap();
+    let db = tmp.path().join("auth-test");
+    let first_root = tmp.path().join("first-root");
+    let second_root = tmp.path().join("second-root");
+    let file = tmp.path().join("file.txt");
+    fs::create_dir_all(&first_root).unwrap();
+    fs::create_dir_all(&second_root).unwrap();
+    fs::write(&file, "contents\n").unwrap();
+    let first_root_arg = format!("--root-dir={}", path_str(&first_root));
+    let second_root_arg = format!("--root-dir={}", path_str(&second_root));
+
+    auth_cmd()
+        .args([
+            "--dir",
+            path_str(&db),
+            first_root_arg.as_str(),
+            second_root_arg.as_str(),
+            "--check",
+            path_str(&file),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Error: Attempt to specify root directory more than once.",
+        ));
+}
+
+#[test]
+fn default_root_and_root_dir_on_command_line_fails() {
+    let tmp = tempdir().unwrap();
+    let db = tmp.path().join("auth-test");
+    let root = tmp.path().join("root");
+    let file = tmp.path().join("file.txt");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(&file, "contents\n").unwrap();
+    let root_arg = format!("--root-dir={}", path_str(&root));
+
+    auth_cmd()
+        .args([
+            "--dir",
+            path_str(&db),
+            "--default-root",
+            root_arg.as_str(),
+            "--check",
+            path_str(&file),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Error: Attempt to specify root directory more than once.",
+        ));
+}
+
+#[test]
+fn auth_options_can_supply_default_root_once() {
+    let tmp = tempdir().unwrap();
+    let db = tmp.path().join("auth-test");
+    let file = tmp.path().join("auth-options-default-root.txt");
+    fs::write(&file, "contents\n").unwrap();
+    let auth_options = format!("-d {} --request-password --default-root", path_str(&db));
+
+    auth_cmd()
+        .env("AUTH_OPTIONS", auth_options)
+        .args(["--write", path_str(&file)])
+        .assert()
+        .success();
+
+    auth_cmd()
+        .args([
+            "--dir",
+            path_str(&db),
+            "--default-root",
+            "--check",
+            path_str(&file),
+        ])
+        .assert()
+        .success();
+}
+
+#[test]
+fn auth_options_can_supply_root_dir_once() {
+    let tmp = tempdir().unwrap();
+    let db = tmp.path().join("auth-test");
+    let root = tmp.path().join("root");
+    let file = root.join("file.txt");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(&file, "contents\n").unwrap();
+    let auth_options = format!(
+        "-d {} --request-password --root-dir={}",
+        path_str(&db),
+        path_str(&root)
+    );
+
+    auth_cmd()
+        .env("AUTH_OPTIONS", auth_options)
+        .args(["--write", path_str(&file)])
+        .assert()
+        .success();
+
+    let root_arg = format!("--root-dir={}", path_str(&root));
+    auth_cmd()
+        .args([
+            "--dir",
+            path_str(&db),
+            root_arg.as_str(),
+            "--check",
+            path_str(&file),
+        ])
+        .assert()
+        .success();
+}
+
+#[test]
+fn auth_options_and_command_line_root_directives_conflict() {
+    let tmp = tempdir().unwrap();
+    let db = tmp.path().join("auth-test");
+    let first_root = tmp.path().join("first-root");
+    let second_root = tmp.path().join("second-root");
+    let file = tmp.path().join("file.txt");
+    fs::create_dir_all(&first_root).unwrap();
+    fs::create_dir_all(&second_root).unwrap();
+    fs::write(&file, "contents\n").unwrap();
+    let auth_options = format!("-d {} --root-dir={}", path_str(&db), path_str(&first_root));
+    let second_root_arg = format!("--root-dir={}", path_str(&second_root));
+
+    auth_cmd()
+        .env("AUTH_OPTIONS", auth_options)
+        .args([second_root_arg.as_str(), "--check", path_str(&file)])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Error: Attempt to specify root directory more than once.",
+        ));
+}
+
+#[test]
+fn auth_options_with_default_root_and_command_line_root_dir_conflict() {
+    let tmp = tempdir().unwrap();
+    let db = tmp.path().join("auth-test");
+    let root = tmp.path().join("root");
+    let file = tmp.path().join("file.txt");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(&file, "contents\n").unwrap();
+    let auth_options = format!("-d {} --default-root", path_str(&db));
+    let root_arg = format!("--root-dir={}", path_str(&root));
+
+    auth_cmd()
+        .env("AUTH_OPTIONS", auth_options)
+        .args([root_arg.as_str(), "--check", path_str(&file)])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Error: Attempt to specify root directory more than once.",
+        ));
+}
+
+#[test]
+fn no_root_directive_implies_default_root() {
+    let tmp = tempdir().unwrap();
+    let db = tmp.path().join("auth-test");
+    let file = tmp.path().join("implicit-default-root.txt");
+    fs::write(&file, "contents\n").unwrap();
+
+    auth_cmd()
+        .args([
+            "--dir",
+            path_str(&db),
+            "--request-password",
+            "--write",
+            path_str(&file),
+        ])
+        .assert()
+        .success();
+
+    auth_cmd()
+        .args(["--dir", path_str(&db), "--check", path_str(&file)])
+        .assert()
+        .success();
 }
