@@ -35,6 +35,18 @@ AUDIT_FULLPATH := ${AUDIT_DIR}/audit.txt
 AUTH_DEBUG     := ${GIT_WORK_DIR}/target/debug/auth
 AUTH_RELEASE   := ${GIT_WORK_DIR}/target/release/auth
 
+ifdef VERS
+  ifeq ($(words ${VERS}),0)
+    override undefine VERS
+  else
+    ifeq ($(words ${VERS}),1)
+    override VERS:=$(firstword ${VERS})
+    else
+    override VERS:=$(firstword ${VERS}) '$(wordlist 2,$(words ${VERS}),${TEXT})'
+    endif
+  endif
+endif
+
 # Special macros to add some color
 ifdef NOCOLOR
   Warning=echo "$1"
@@ -63,8 +75,8 @@ version:
 #.______________________________________________________________________________
 #| * unpack VERS=#.#.# - extract version from archives
 unpack:
-	if [[ -n "${VERS}" ]]; then \
-	          python3 ${DEV_TOOLS}/check-version.py "${VERS}"; \
+	if [[ -n '${VERS}' ]]; then \
+	          python3 ${DEV_TOOLS}/check-version.py ${VERS}; \
 	          python3 ${DEV_TOOLS}/unpack.py "$(python3 ${DEV_TOOLS}/check-version.py ${VERS})"; \
 	        else \
 	          python3 ${DEV_TOOLS}/unpack.py "$(python3 ${DEV_TOOLS}/check-version.py)" \
