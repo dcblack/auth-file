@@ -61,7 +61,7 @@ version:
 	python3 ${DEV_TOOLS}/check-version.py --show
 
 #.______________________________________________________________________________
-#| * unpack - extract version from archives
+#| * unpack VERS=#.#.# - extract version from archives
 unpack:
 	if [[ -n "${VERS}" ]]; then \
 	          python3 ${DEV_TOOLS}/check-version.py "${VERS}"; \
@@ -104,7 +104,7 @@ verify: fmt check clippy test
 	@$(call Finished,Verification complete)
 
 #.______________________________________________________________________________
-#| * upload - commit to GitHub
+#| * upload VERS='#.#.# Reason' - commit to GitHub (aka push)
 upload: verify
 	python3 ${DEV_TOOLS}/check-version.py ${VERS}
 	set -- ${VERS}; \
@@ -120,7 +120,7 @@ upload: verify
 push: upload
 
 #.______________________________________________________________________________
-#| * debug - compile a development version
+#| * dev - compile a development version
 ${AUTH_DEBUG}: dev
 dev:
 	cargo build --all-targets --all-features
