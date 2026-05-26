@@ -6,6 +6,18 @@ The format is based on Keep a Changelog, and this project aims to follow Semanti
 
 
 
+## [0.8.8] - 2026-05-26
+
+### Fixed
+
+- Cached authorization is now honored by later protected commands even when those later commands do not repeat `--cache-time=SECONDS`.
+- Tampered, expired, or machine-mismatched authorization cache records are now cleared and ignored.
+
+### Added
+
+- Added CLI tests for cross-command cache reuse and tampered cache rejection.
+
+
 ## [0.8.7] - 2026-05-18
 
 ### Added

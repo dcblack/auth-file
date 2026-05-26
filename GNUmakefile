@@ -120,16 +120,16 @@ upload: verify
 push: upload
 
 #.______________________________________________________________________________
-#| * debug - compile a debug version
-${AUTH_DEBUG}: debug
-debug:
-	cargo build --debug
+#| * debug - compile a development version
+${AUTH_DEBUG}: dev
+dev:
+	cargo build --all-targets --all-features
 
 #.______________________________________________________________________________
 #| * release - compile a release version
 ${AUTH_RELEASE}: release
 release:
-	cargo build --release
+	cargo build --release --all-targets --all-features
 
 #.______________________________________________________________________________
 #| * ci - run continuous integration tests

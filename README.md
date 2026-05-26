@@ -265,7 +265,9 @@ The `--no-platform-auth` option has been removed from the CLI; fallback-password
 
 ### Authorization cache
 
-`--cache-time=SECONDS` caches a successful platform/fallback authorization for the selected database for up to 120 seconds. The default is `0`, which disables caching. The cache entry is MAC-protected and tied to the current machine hash and database namespace.
+`--cache-time=SECONDS` caches a successful platform/fallback authorization for the selected database for up to 120 seconds. The default is `0`, which means a successful authorization does not create or refresh the cache. A later protected command always checks for an existing unexpired cache first, even when that later command does not specify `--cache-time`.
+
+The cache entry is MAC-protected and tied to the current machine hash and database namespace. Tampered, expired, or machine-mismatched cache records are ignored and cleared.
 
 
 ## v0.8.4 CLI additions

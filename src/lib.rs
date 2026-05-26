@@ -945,7 +945,7 @@ fn authorize_or_use_cache(
     keys: &DbKeys,
     options: &AuthOptions,
 ) -> Result<(), AuthError> {
-    if options.cache_seconds > 0 && cached_authorization_is_valid(conn, db_dir, keys)? {
+    if cached_authorization_is_valid(conn, db_dir, keys)? {
         return Ok(());
     }
 
@@ -981,12 +981,24 @@ fn cached_authorization_is_valid(
         return Ok(false);
     };
     let Some(until) = u64::try_from(until_i).ok() else {
+        clear_authorization_cache(conn)?;
         return Ok(false);
     };
     if unix_now() > until || machine_hash != current_machine_hash() {
+        clear_authorization_cache(conn)?;
         return Ok(false);
     }
-    Ok(cache_mac == authorization_cache_mac(db_dir, keys, until, &machine_hash))
+    let expected_mac = authorization_cache_mac(db_dir, keys, until, &machine_hash);
+    if cache_mac != expected_mac {
+        clear_authorization_cache(conn)?;
+        return Ok(false);
+    }
+    Ok(true)
+}
+
+fn clear_authorization_cache(conn: &Connection) -> Result<(), AuthError> {
+    conn.execute("DELETE FROM authorization_cache WHERE id = 1", [])?;
+    Ok(())
 }
 
 fn cache_successful_authorization(

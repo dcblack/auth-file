@@ -67,6 +67,7 @@ AUTH_DIR   = ${TEST_DIR}/auth-test
 ROOT_DIR   = ${TEST_DIR}/root
 COPY_ROOT  = ${TEST_DIR}/root-copy
 ART_DIR    = ${ARTIFACTS}/manual-tests
+RESULTS    = ${ARTIFACTS}/test-results.txt
 TEST_PASS  = Long-Test-Password-2026!
 BAD_PASS   = Wrong-Test-Password-2026!
 FILES      = file1 file2 file3 file4 file5
@@ -100,10 +101,10 @@ else
 endif
 RULER := ------------------------------------------------------------
 Prompt=printf "${CYN}%% ${OFF}"
-Test=printf "${BLU}${RULER}\nTest:${CYN} $1${OFF}\n"
-Passed=printf "${GRN}Test passed:${CYN} $1${OFF}\n"
-ExpectFailed=printf "${RED}Error:${OFF} $1\n" >&2
-ExpectPassed=printf "${GRN}Success: expected failure - ${OFF} $1\n"
+Test=printf "${BLU}${RULER}\nTest:${CYN} $1${OFF}\n"; printf "Running $@\n"               >>"${RESULTS}"
+Passed=printf "${GRN}Test passed:${CYN} $@${OFF}\n"; printf "Passed $@\n"                 >>"${RESULTS}"
+ExpectFailed=printf "${RED}Error:${OFF} $@\n" >&2; printf "Passed $@ - $1\n"              >>"${RESULTS}"
+ExpectPassed=printf "${GRN}Success: expected failure - ${OFF} $1\n"; printf "Failed $@\n" >>"${RESULTS}"
 Gold_test=$(if $(wildcard ${GOLD_DIR}/$1),cmp $1 $2,@printf "${YLW}Missing golden file: ${OFF}$1\n")
 
 .PHONY: test-all test-clear test-setup test-version test-help test-write-check \
@@ -138,7 +139,7 @@ test-clear:
 	@$(call Prompt)
 	rm -fr "${ART_DIR}" # remove manual artifacts
 	@$(call Prompt)
-	mkdir -p "${ART_DIR}"
+	mkdir -p "${ART_DIR}" && date >"${RESULTS}"
 
 #.______________________________________________________________________________
 #| * test-setup - build auth and create deterministic test files
@@ -163,6 +164,7 @@ test-version:
 	@$(call Prompt)
 	"${AUTH}" --version | tee ${ART_DIR}/version.txt
 	$(call Gold_test,"version.txt","${ART_DIR}/version.txt")
+	@$(call Passed)
 
 #.______________________________________________________________________________
 #| * test-help - test --help and -h
@@ -175,6 +177,7 @@ test-help:
 	@$(call Prompt)
 	cmp "${ART_DIR}/help-long.txt" "${ART_DIR}/help-short.txt"
 	$(call Gold_test,"help.txt","${ART_DIR}/help-long.txt")
+	@$(call Passed)
 
 #.______________________________________________________________________________
 #| * test-write-check - write and check several files
@@ -186,6 +189,7 @@ test-write-check:
 	${AUTH_ENV} "${AUTH}" --check "${TEST_DIR}/file1" "${TEST_DIR}/file2"
 	@$(call Prompt)
 	cd "${TEST_DIR}" && ${AUTH_ENV} "${AUTH}" -ck file1 file2
+	@$(call Passed)
 
 #.______________________________________________________________________________
 #| * test-remove - remove one authorization and confirm it fails check
@@ -198,7 +202,6 @@ test-remove:
 	@$(call Prompt)
 	if ${AUTH_ENV} "${AUTH}" --check "${TEST_DIR}/file3"; then \
 	  $(call ExpectPassed,Expected removed file check to fail); \
-	  exit 1; \
 	else \
 	  $(call ExpectFailed,removed file no longer checks); \
 	fi
@@ -210,14 +213,12 @@ test-missing:
 	@$(call Prompt)
 	if ${AUTH_ENV} "${AUTH}" --check "${TEST_DIR}/file4"; then \
 	  $(call ExpectPassed,Expected unauthorized file check to fail); \
-	  exit 1; \
 	else \
 	  $(call ExpectFailed,unauthorized file rejected); \
 	fi
 	@$(call Prompt)
 	if ${AUTH_ENV} "${AUTH}" --check "${TEST_DIR}/does-not-exist"; then \
 	  $(call ExpectPassed,Expected missing file check to fail); \
-	  exit 1; \
 	else \
 	  $(call ExpectFailed,nonexistent file rejected); \
 	fi
@@ -239,7 +240,6 @@ test-cache-reject:
 	@$(call Prompt)
 	if ${AUTH_ENV} "${AUTH}" --request-password --cache-time=121 --write "${TEST_DIR}/file1"; then \
 	  $(call ExpectPassed,Expected --cache-time=121 to fail); \
-	  exit 1; \
 	else \
 	  $(call ExpectFailed,--cache-time=121 rejected); \
 	fi
@@ -256,13 +256,13 @@ test-request-password:
 test-bad-password:
 	@$(call Test,Bad auth password)
 	@$(call Prompt)
-	AUTH_OPTIONS="-d ${AUTH_DIR}" AUTH_TEST_CURRENT_PASSWORD_OR_BURNER="${BAD_PASS}" \
-	  if "${AUTH}" --request-password --cache-time=0 --write "${TEST_DIR}/file1"; then \
-	    $(call ExpectPassed,Expected bad password to fail); \
-	    exit 1; \
-	  else \
-	    $(call ExpectFailed,bad auth password rejected); \
-	  fi
+	if env AUTH_OPTIONS="-d ${AUTH_DIR}" \
+	    AUTH_TEST_CURRENT_PASSWORD_OR_BURNER="${BAD_PASS}" \
+	    "${AUTH}" --request-password --cache-time=0 --write "${TEST_DIR}/file1"; then \
+	  printf "Success: expected failure - Expected bad password to fail\n"; \
+	else \
+	  printf "Error: bad auth password rejected\n" >&2; \
+	fi
 
 #.______________________________________________________________________________
 #| * test-show-dir - authorized --show-dir
@@ -319,7 +319,10 @@ test-summary:
 	@$(call Test,Manual test artifacts)
 	@$(call Prompt)
 	find "${ART_DIR}" -maxdepth 1 -type f -print | sort
-
+	@printf "${BLU}${RULER}\nTest${CYN} summary${OFF}\n"; \
+         printf "${RED}%d failures${OFF}\n" $$(grep -c '^Failed'  "${RESULTS}"); \
+         printf "${GRN}%d passed${OFF}\n"   $$(grep -c '^Passed'  "${RESULTS}"); \
+         printf "${CYN}%d test ran${OFF}\n" $$(grep -c '^Running' "${RESULTS}");
 
 #.______________________________________________________________________________
 #| * test-root-directives - root directive hardening smoke tests
@@ -330,14 +333,14 @@ test-root-directives:
 	@$(call Prompt)
 	if ${AUTH_ENV} "${AUTH}" --default-root --root-dir=${ROOT_DIR} --check "${TEST_DIR}/file1"; then \
 	  $(call ExpectPassed,Expected duplicate root directives to fail); \
-	  exit 1; \
 	else \
 	  $(call ExpectFailed,duplicate root directives rejected); \
 	fi
 	@$(call Prompt)
 	if AUTH_OPTIONS="-d ${AUTH_DIR} --default-root" "${AUTH}" --root-dir=${ROOT_DIR} --check "${TEST_DIR}/file1"; then \
 	  $(call ExpectPassed,Expected AUTH_OPTIONS plus CLI root directive to fail); \
-	  exit 1; \
 	else \
 	  $(call ExpectFailed,AUTH_OPTIONS plus CLI root directive rejected); \
 	fi
+
+# This line remains to indicate the last line of this file

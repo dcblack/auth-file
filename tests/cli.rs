@@ -1,5 +1,6 @@
 use assert_cmd::Command;
 use predicates::prelude::*;
+use rusqlite::Connection;
 use std::fs;
 use std::path::Path;
 use tempfile::tempdir;
@@ -668,4 +669,80 @@ fn no_root_directive_implies_default_root() {
         .args(["--dir", path_str(&db), "--check", path_str(&file)])
         .assert()
         .success();
+}
+
+
+#[test]
+fn cache_created_once_is_reused_without_repeating_cache_time() {
+    let tmp = tempdir().unwrap();
+    let db = tmp.path().join("auth-test");
+    let first = tmp.path().join("cache-first-command.txt");
+    let second = tmp.path().join("cache-second-command.txt");
+    fs::write(&first, "one\n").unwrap();
+    fs::write(&second, "two\n").unwrap();
+
+    auth_cmd()
+        .args([
+            "--dir",
+            path_str(&db),
+            "--request-password",
+            "--cache-time=60",
+            "--write",
+            path_str(&first),
+        ])
+        .assert()
+        .success();
+
+    auth_cmd()
+        .env("AUTH_TEST_CURRENT_PASSWORD_OR_BURNER", "Wrong-Test-Password-2026!")
+        .args([
+            "--dir",
+            path_str(&db),
+            "--request-password",
+            "--write",
+            path_str(&second),
+        ])
+        .assert()
+        .success();
+}
+
+#[test]
+fn tampered_authorization_cache_is_ignored() {
+    let tmp = tempdir().unwrap();
+    let db = tmp.path().join("auth-test");
+    let first = tmp.path().join("cache-tamper-first.txt");
+    let second = tmp.path().join("cache-tamper-second.txt");
+    fs::write(&first, "one\n").unwrap();
+    fs::write(&second, "two\n").unwrap();
+
+    auth_cmd()
+        .args([
+            "--dir",
+            path_str(&db),
+            "--request-password",
+            "--cache-time=60",
+            "--write",
+            path_str(&first),
+        ])
+        .assert()
+        .success();
+
+    let conn = Connection::open(db.join("auth.db")).unwrap();
+    conn.execute(
+        "UPDATE authorization_cache SET authorized_until_unix = authorized_until_unix + 3600",
+        [],
+    )
+    .unwrap();
+
+    auth_cmd()
+        .env("AUTH_TEST_CURRENT_PASSWORD_OR_BURNER", "Wrong-Test-Password-2026!")
+        .args([
+            "--dir",
+            path_str(&db),
+            "--request-password",
+            "--write",
+            path_str(&second),
+        ])
+        .assert()
+        .failure();
 }
