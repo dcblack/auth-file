@@ -106,7 +106,7 @@ verify: fmt check clippy test
 #.______________________________________________________________________________
 #| * upload - commit to GitHub
 upload: verify
-	"${ARTIFACTS}/python3 ${DEV_TOOLS}/check-version.py ${VERS}
+	python3 ${DEV_TOOLS}/check-version.py ${VERS}
 	set -- ${VERS}; \
         if [[ $$# == 1 ]]; then \
           git commit -a; \
@@ -116,6 +116,8 @@ upload: verify
           git tag -a -s -m "$$1" "v$(firstword $$1)"; \
         fi
 	git push
+
+push: upload
 
 #.______________________________________________________________________________
 #| * debug - compile a debug version
