@@ -1,0 +1,67 @@
+Name
+----
+
+  auth - set, check, or remove authorization for files
+
+Synopsis
+--------
+
+  auth --help
+  auth --version
+  auth --write  [OPTIONS] FILENAME(S)
+  auth --check  [OPTIONS] FILENAME(S)
+  auth --remove [OPTIONS] FILENAME(S)
+  auth --change-password [OPTIONS]
+  auth --show-dir [OPTIONS]
+  auth --stats [OPTIONS]
+
+Options
+-------
+
+  --cache-time=SECONDS       Cache successful authorization for 0-120 seconds [default: 0]
+  --change-password          Change auth password using current password or burner
+  --check, -ck               Verify specified files are valid
+  --color WHEN               Color output: auto, always, never [default: auto]
+  --dir DIR, -d DIR          Specify database directory [default: ~/.auth]
+  --force, -f                Reserved for future non-security confirmation prompts
+  --help, -h                 Display this text using a pager when interactive
+  --quiet, -q                Report failures only
+  --remove, -rm              Remove authorization; requires platform authorization or auth password
+  --request-password         Require Auth password/burner instead of platform authorization
+  --root-dir=PATH          Store/check paths relative to this canonical root
+  --show-dir                 Display auth storage paths; requires authorization
+  --silent, -s               Silent even with failure, useful in scripts
+  --stats                    Display database statistics; requires authorization
+  --verbose, -v              Increase verbosity
+  --version                  Display version
+  --write, -wr               Authorize files; requires platform authorization or auth password
+
+Environment
+-----------
+
+  AUTH_OPTIONS               Initial options parsed before command-line arguments.
+                             Example: export AUTH_OPTIONS="-d ./auth-test"
+
+  NO_COLOR, NOCOLOR          Disable colored output unless --color always is given.
+
+  PAGER                      Pager used for --help when stdout is a terminal.
+                             Defaults to less -R, then more.
+
+Compatibility
+-------------
+
+  Options may appear between filenames, allowing a mix of actions in one call.
+  AUTH_OPTIONS is processed first, then command-line arguments override or extend it.
+
+  Example:
+
+    auth --write a.txt b.txt
+    auth --check a.txt b.txt
+    auth --request-password --cache-time=60 --root-dir=. --write a.txt b.txt
+
+Exit Status
+-----------
+
+  0  all requested operations succeeded
+  1  at least one requested operation failed
+  2  command-line usage error
