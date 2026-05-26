@@ -32,6 +32,8 @@ SBOM_FILE      := auth-file.dx
 SBOM_FULLPATH  := ${SBOM_DIR}/${SBOM_FILE}.json
 AUDIT_DIR      := ${ARTIFACTS}/audit
 AUDIT_FULLPATH := ${AUDIT_DIR}/audit.txt
+AUTH_DEBUG     := ${GIT_WORK_DIR}/target/debug/auth
+AUTH_RELEASE   := ${GIT_WORK_DIR}/target/release/auth
 
 # Special macros to add some color
 ifdef NOCOLOR
@@ -41,7 +43,6 @@ else
   Warning=printf "[1;93mWarning:[0m $1\n"
   Finished=printf "[1;96mFinished:[0m $1\n"
 endif
-
 
 #.______________________________________________________________________________
 #| * help - display documentation
@@ -117,7 +118,14 @@ upload: verify
 	git push
 
 #.______________________________________________________________________________
+#| * debug - compile a debug version
+${AUTH_DEBUG}: debug
+debug:
+	cargo build --debug
+
+#.______________________________________________________________________________
 #| * release - compile a release version
+${AUTH_RELEASE}: release
 release:
 	cargo build --release
 
@@ -144,6 +152,13 @@ sbom:
 	mkdir -p '${SBOM_DIR}'
 	mv '${SBOM_FILE}.json' '${SBOM_DIR}'/
 	@$(call Finished,Created ${SBOM_FULLPATH})
+
+#.______________________________________________________________________________
+#| * install - copy release to ${HOME}/bin
+install: ${AUTH_RELEASE}
+	mkdir -p "${HOME}/bin"
+	rsync -av "${AUTH_RELEASE}" "${HOME}/bin/"
+	@$(call Installed,auth is now installed as ${AUTH_RELEASE})
 
 ifneq ("$(wildcard ${TESTS})","")
   include ${TESTS}
