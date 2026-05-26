@@ -232,6 +232,7 @@ test-cache:
 	@$(call Prompt)
 	AUTH_OPTIONS="-d ${AUTH_DIR}" AUTH_TEST_CURRENT_PASSWORD_OR_BURNER="${BAD_PASS}" \
 	  "${AUTH}" --request-password --cache-time=60 --write "${TEST_DIR}/file5"
+	@$(call Passed)
 
 #.______________________________________________________________________________
 #| * test-cache-reject - verify --cache-time rejects values above 120
@@ -250,6 +251,7 @@ test-request-password:
 	@$(call Test,Request password route)
 	@$(call Prompt)
 	${AUTH_ENV} "${AUTH}" --request-password --write "${TEST_DIR}/file1"
+	@$(call Passed)
 
 #.______________________________________________________________________________
 #| * test-bad-password - wrong password should fail when no cache is present
@@ -259,9 +261,9 @@ test-bad-password:
 	if env AUTH_OPTIONS="-d ${AUTH_DIR}" \
 	    AUTH_TEST_CURRENT_PASSWORD_OR_BURNER="${BAD_PASS}" \
 	    "${AUTH}" --request-password --cache-time=0 --write "${TEST_DIR}/file1"; then \
-	  printf "Success: expected failure - Expected bad password to fail\n"; \
+	  $(call ExpectFailed,Expected bad password to fail); \
 	else \
-	  printf "Error: bad auth password rejected\n" >&2; \
+	  $(call ExpectPassed, bad auth password rejected); \
 	fi
 
 #.______________________________________________________________________________
@@ -272,6 +274,7 @@ test-show-dir:
 	${AUTH_ENV} "${AUTH}" --request-password --show-dir >"${ART_DIR}/show-dir.txt"
 	@$(call Prompt)
 	cat "${ART_DIR}/show-dir.txt"
+	@$(call Passed)
 
 #.______________________________________________________________________________
 #| * test-stats - authorized --stats
@@ -281,6 +284,7 @@ test-stats:
 	${AUTH_ENV} "${AUTH}" --request-password --stats >"${ART_DIR}/stats.txt"
 	@$(call Prompt)
 	cat "${ART_DIR}/stats.txt"
+	@$(call Passed)
 
 #.______________________________________________________________________________
 #| * test-root-dir - root-relative identity works across copied roots
@@ -292,6 +296,7 @@ test-root-dir:
 	AUTH_OPTIONS="-d ${AUTH_DIR} --root-dir=${COPY_ROOT}" \
 	AUTH_TEST_CURRENT_PASSWORD_OR_BURNER="${TEST_PASS}" \
 	  "${AUTH}" --request-password --check "${COPY_ROOT}/rel-file1"
+	@$(call Passed)
 
 #.______________________________________________________________________________
 #| * test-color - color modes and NO_COLOR/NOCOLOR
@@ -303,6 +308,7 @@ test-color:
 	NO_COLOR=1 ${AUTH_ENV} "${AUTH}" --color auto --check "${TEST_DIR}/file1" 2>"${ART_DIR}/color-nocolor.err" || true
 	@$(call Prompt)
 	NOCOLOR=1 ${AUTH_ENV} "${AUTH}" --color auto --check "${TEST_DIR}/file1" 2>"${ART_DIR}/color-nocolor-legacy.err" || true
+	@$(call Passed)
 
 #.______________________________________________________________________________
 #| * test-auth-options - AUTH_OPTIONS supplies directory and root options
@@ -312,6 +318,7 @@ test-auth-options:
 	AUTH_OPTIONS="-d ${AUTH_DIR} --root-dir=${ROOT_DIR}" \
 	AUTH_TEST_CURRENT_PASSWORD_OR_BURNER="${TEST_PASS}" \
 	  "${AUTH}" --request-password --check "${ROOT_DIR}/rel-file1"
+	@$(call Passed)
 
 #.______________________________________________________________________________
 #| * test-summary - summarize manual test artifacts
@@ -320,9 +327,9 @@ test-summary:
 	@$(call Prompt)
 	find "${ART_DIR}" -maxdepth 1 -type f -print | sort
 	@printf "${BLU}${RULER}\nTest${CYN} summary${OFF}\n"; \
-         printf "${RED}%d failures${OFF}\n" $$(grep -c '^Failed'  "${RESULTS}"); \
-         printf "${GRN}%d passed${OFF}\n"   $$(grep -c '^Passed'  "${RESULTS}"); \
-         printf "${CYN}%d test ran${OFF}\n" $$(grep -c '^Running' "${RESULTS}");
+         printf "${RED}%d failures${OFF}\n"  $$(grep -c '^Failed'  "${RESULTS}"); \
+         printf "${GRN}%d passed${OFF}\n"    $$(grep -c '^Passed'  "${RESULTS}"); \
+         printf "${CYN}%d tests ran${OFF}\n" $$(grep -c '^Running' "${RESULTS}");
 
 #.______________________________________________________________________________
 #| * test-root-directives - root directive hardening smoke tests

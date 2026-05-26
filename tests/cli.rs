@@ -40,6 +40,33 @@ fn version_option_works() {
         .success()
         .stdout(predicate::str::contains("auth "));
 }
+#[test]
+fn help_option_works_even_with_auth_options() {
+    Command::cargo_bin("auth")
+        .unwrap()
+        .env("AUTH_OPTIONS", "-d ./auth-test")
+        .arg("--help")
+        .assert()
+        .success();
+}
+#[test]
+fn short_help_option_works_even_with_auth_options() {
+    Command::cargo_bin("auth")
+        .unwrap()
+        .env("AUTH_OPTIONS", "-d ./auth-test")
+        .arg("-h")
+        .assert()
+        .success();
+}
+#[test]
+fn version_option_works_even_with_auth_options() {
+    Command::cargo_bin("auth")
+        .unwrap()
+        .env("AUTH_OPTIONS", "-d ./auth-test")
+        .arg("--version")
+        .assert()
+        .success();
+}
 
 #[test]
 fn write_authorization_for_two_files() {
@@ -671,7 +698,6 @@ fn no_root_directive_implies_default_root() {
         .success();
 }
 
-
 #[test]
 fn cache_created_once_is_reused_without_repeating_cache_time() {
     let tmp = tempdir().unwrap();
@@ -694,7 +720,10 @@ fn cache_created_once_is_reused_without_repeating_cache_time() {
         .success();
 
     auth_cmd()
-        .env("AUTH_TEST_CURRENT_PASSWORD_OR_BURNER", "Wrong-Test-Password-2026!")
+        .env(
+            "AUTH_TEST_CURRENT_PASSWORD_OR_BURNER",
+            "Wrong-Test-Password-2026!",
+        )
         .args([
             "--dir",
             path_str(&db),
@@ -735,7 +764,10 @@ fn tampered_authorization_cache_is_ignored() {
     .unwrap();
 
     auth_cmd()
-        .env("AUTH_TEST_CURRENT_PASSWORD_OR_BURNER", "Wrong-Test-Password-2026!")
+        .env(
+            "AUTH_TEST_CURRENT_PASSWORD_OR_BURNER",
+            "Wrong-Test-Password-2026!",
+        )
         .args([
             "--dir",
             path_str(&db),

@@ -325,11 +325,26 @@ fn flush_current_files(state: &mut CliState) {
 }
 
 fn collect_args() -> Result<Vec<String>, String> {
-    let mut args = Vec::new();
-    if let Ok(extra) = env::var("AUTH_OPTIONS") {
-        args.extend(split_auth_options(&extra)?);
+    let cli_args: Vec<String> = env::args().skip(1).collect();
+
+    if cli_args
+        .first()
+        .is_some_and(|arg| arg == "--help" || arg == "-h")
+    {
+        return Ok(cli_args);
     }
-    args.extend(env::args().skip(1));
+
+    if cli_args.first().is_some_and(|arg| arg == "--version") {
+        return Ok(cli_args);
+    }
+
+    let mut args = if let Ok(auth_options) = env::var("AUTH_OPTIONS") {
+        split_auth_options(&auth_options)?
+    } else {
+        Vec::new()
+    };
+
+    args.extend(cli_args);
     Ok(args)
 }
 
