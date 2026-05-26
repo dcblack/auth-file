@@ -22,7 +22,8 @@ def emit_tagged_lines(path: Path, tag: str) -> None:
                 print(line[2:].rstrip("\n"))
 
 
-def format_target_rows(path: Path) -> None:
+def format_target_rows(path: Path) -> set[str]:
+    targets: set[str] = set()
     with path.open(encoding="utf-8") as handle:
         for raw_line in handle:
             if not raw_line.startswith("#|"):
@@ -32,6 +33,7 @@ def format_target_rows(path: Path) -> None:
             match = TARGET_PATTERN.match(line)
             if match is not None:
                 target, description = match.groups()
+                targets.add(target)
                 print(f"| {target:<{TARGET_WIDTH}} | {description}")
                 continue
 
@@ -43,8 +45,11 @@ def format_target_rows(path: Path) -> None:
 
             print(line)
 
+    return targets
 
-def format_test_rows(path: Path) -> None:
+
+def format_test_rows(path: Path, skip_targets: set[str] | None = None) -> None:
+    skip_targets = skip_targets or set()
     current_target = ""
     with path.open(encoding="utf-8") as handle:
         for raw_line in handle:
@@ -54,6 +59,9 @@ def format_test_rows(path: Path) -> None:
 
             test_match = TEST_CALL_PATTERN.search(raw_line)
             if test_match is None:
+                continue
+
+            if current_target in skip_targets:
                 continue
 
             description = test_match.group(1).replace(")", "").strip()
@@ -72,8 +80,8 @@ def main() -> int:
 
     format_target_rows(args.makefile)
     if args.tests.is_file():
-        format_target_rows(args.tests)
-        format_test_rows(args.tests)
+        documented_targets = format_target_rows(args.tests)
+        format_test_rows(args.tests, skip_targets=documented_targets)
         emit_tagged_lines(args.tests, ">")
 
     emit_tagged_lines(args.makefile, ">")
