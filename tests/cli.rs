@@ -40,6 +40,7 @@ fn version_option_works() {
         .success()
         .stdout(predicate::str::contains("auth "));
 }
+
 #[test]
 fn help_option_works_even_with_auth_options() {
     Command::cargo_bin("auth")
@@ -697,6 +698,7 @@ fn no_root_directive_implies_default_root() {
         .assert()
         .success();
 }
+
 
 #[test]
 fn cache_created_once_is_reused_without_repeating_cache_time() {
