@@ -107,7 +107,7 @@ ExpectFailed=printf "${RED}Error:${OFF} $@\n" >&2; printf "Passed $@ - $1\n"    
 ExpectPassed=printf "${GRN}Success: expected failure - ${OFF} $1\n"; printf "Failed $@\n" >>"${RESULTS}"
 Gold_test=$(if $(wildcard ${GOLD_DIR}/$1),cmp $1 $2,@printf "${YLW}Missing golden file: ${OFF}$1\n")
 
-.PHONY: test-all test-clear test-setup test-version test-help test-write-check \
+.PHONY: golden test-all test-clear test-setup test-version test-help test-write-check \
         test-remove test-missing test-cache test-cache-reject test-request-password \
         test-bad-password test-show-dir test-stats test-root-dir test-root-directives test-color \
         test-auth-options test-summary

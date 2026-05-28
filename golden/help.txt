@@ -19,22 +19,27 @@ Options
 -------
 
   --cache-time=SECONDS       Cache successful authorization for 0-120 seconds [default: 0]
-  --change-password          Change auth password using current password or burner
+  --change-password          Change auth password using current password or burner[^2]
   --check, -ck               Verify specified files are valid
   --color WHEN               Color output: auto, always, never [default: auto]
+  --default-root             Use default full-path file identity
   --dir DIR, -d DIR          Specify database directory [default: ~/.auth]
   --force, -f                Reserved for future non-security confirmation prompts
   --help, -h                 Display this text using a pager when interactive
   --quiet, -q                Report failures only
-  --remove, -rm              Remove authorization; requires platform authorization or auth password
+  --remove, -rm              Remove authorization[^1]
   --request-password         Require Auth password/burner instead of platform authorization
-  --root-dir=PATH          Store/check paths relative to this canonical root
-  --show-dir                 Display auth storage paths; requires authorization
+  --root-dir=PATH            Store/check paths relative to this canonical root
+  --show-dir                 Display auth storage paths[^2]
   --silent, -s               Silent even with failure, useful in scripts
-  --stats                    Display database statistics; requires authorization
+  --stats                    Display database statistics[^2]
   --verbose, -v              Increase verbosity
   --version                  Display version
-  --write, -wr               Authorize files; requires platform authorization or auth password
+  --write, -wr               Authorize files[^1]
+
+[^1]: Requires platform authorization or a valid cached authorization session.
+
+[^2]: Requires platform authorization, cached authorization session, or Auth password.
 
 Environment
 -----------
@@ -58,6 +63,7 @@ Compatibility
     auth --write a.txt b.txt
     auth --check a.txt b.txt
     auth --request-password --cache-time=60 --root-dir=. --write a.txt b.txt
+    auth --default-root --check a.txt
 
 Exit Status
 -----------
