@@ -796,7 +796,6 @@ fn check_record(
     }
 
     verify_record(&record, keys)?;
-    set_metadata_unix(conn, "last_check_unix", unix_now())?;
     Ok(())
 }
 

@@ -207,7 +207,7 @@ test-cache:
 	${AUTH_ENV} "${AUTH}" --request-password --cache-time=60 --write "${TEST_DIR}/file4"
 	@$(call Prompt)
 	AUTH_OPTIONS="-d ${AUTH_DIR}" AUTH_TEST_CURRENT_PASSWORD_OR_BURNER="${BAD_PASS}" \
-	  "${AUTH}" --request-password --cache-time=60 --write "${TEST_DIR}/file5"
+	  "${AUTH}" --request-password --write "${TEST_DIR}/file5"
 	@$(call Passed)
 
 #.______________________________________________________________________________

@@ -702,6 +702,42 @@ fn no_root_directive_implies_default_root() {
 }
 
 #[test]
+fn check_with_cache_time_does_not_request_password() {
+    let tmp = tempdir().unwrap();
+    let db = tmp.path().join("auth-test");
+    let file = tmp.path().join("checked-with-cache-time.txt");
+    fs::write(&file, "contents\n").unwrap();
+
+    auth_cmd()
+        .args([
+            "--dir",
+            path_str(&db),
+            "--request-password",
+            "--write",
+            path_str(&file),
+        ])
+        .assert()
+        .success();
+
+    Command::cargo_bin("auth")
+        .unwrap()
+        .env("AUTH_OPTIONS", format!("-d {}", db.display()))
+        .env_remove("AUTH_TEST_CURRENT_PASSWORD_OR_BURNER")
+        .env_remove("AUTH_TEST_FALLBACK_PASSWORD")
+        .env_remove("AUTH_TEST_FALLBACK_PASSWORD_CONFIRM")
+        .args([
+            "--default-root",
+            "--color",
+            "always",
+            "--cache-time=60",
+            "--check",
+            path_str(&file),
+        ])
+        .assert()
+        .success();
+}
+
+#[test]
 fn cache_created_once_is_reused_without_repeating_cache_time() {
     let tmp = tempdir().unwrap();
     let db = tmp.path().join("auth-test");
