@@ -18,7 +18,8 @@
 SHELL = /bin/bash
 GIT_EXE  = $(shell command -v git)
 THIS_MAKEFILE := $(realpath $(lastword $(MAKEFILE_LIST)))
-PHONIES := $(shell perl -lane 'print $$1 if m{^([a-zA-Z][-a-zA-Z0-9_]*):[^=]*$$};' ${THIS_MAKEFILE})
+TESTS ?= tests.mk # can be overridden
+PHONIES := $(sort $(shell perl -lane 'print $$1 if m{^([a-zA-Z][-a-zA-Z0-9_]*):[^=]*$$};' ${THIS_MAKEFILE} ${TESTS}))
 
 .PHONY: $(PHONIES)
 
@@ -27,12 +28,14 @@ PHONIES := $(shell perl -lane 'print $$1 if m{^([a-zA-Z][-a-zA-Z0-9_]*):[^=]*$$}
 GIT_WORK_DIR   := $(shell ${GIT_EXE} rev-parse --show-toplevel)
 DEV_TOOLS      := ${GIT_WORK_DIR}/dev-tools
 ARTIFACTS      := ${GIT_WORK_DIR}/artifacts
+ARCHIVES       := ${GIT_WORK_DIR}/ARCHIVE
+ARCHIVE_NOW    := ${ARCHIVES}/auth-file-$(shell date +%s).zip
 SBOM_DIR       := ${ARTIFACTS}/sbom
 SBOM_FILE      := auth-file.dx
 SBOM_FULLPATH  := ${SBOM_DIR}/${SBOM_FILE}.json
 AUDIT_DIR      := ${ARTIFACTS}/audit
 AUDIT_FULLPATH := ${AUDIT_DIR}/audit.txt
-AUTH_DEBUG     := ${GIT_WORK_DIR}/target/debug/auth
+AUTH_DEV       := ${GIT_WORK_DIR}/target/debug/auth
 AUTH_RELEASE   := ${GIT_WORK_DIR}/target/release/auth
 
 ifdef VERS
@@ -49,12 +52,31 @@ endif
 
 # Special macros to add some color
 ifdef NOCOLOR
-  Warning=echo "$1"
-  Finished=echo "$1"
+  RED :=
+  GRN :=
+  YLW :=
+  BLU :=
+  MAG :=
+  CYN :=
+  OFF :=
 else
-  Warning=printf "[1;93mWarning:[0m $1\n"
-  Finished=printf "[1;96mFinished:[0m $1\n"
+  RED := [1;91m
+  GRN := [1;92m
+  YLW := [1;93m
+  BLU := [1;94m
+  MAG := [1;95m
+  CYN := [1;96m
+  OFF := [0m
 endif
+RULER   := ------------------------------------------------------------
+Prompt   = printf "${CYN}%% ${OFF}"
+Info     = printf "${BLU}${RULER}\nInfo:${CYN} $1${OFF}\n"; printf "$@\n"
+Error    = printf "${RED}Error:${OFF} $1\n"
+Warning  = printf "${YLW}Warning:${OFF} $1\n"
+Finished = printf "${CYN}Finished:${OFF} $1\n"
+define Vars
+  $(foreach var,$(strip $1),printf "${BLU}${var}${OFF} = $(value ${var})\n";)
+endef
 
 #.______________________________________________________________________________
 #| * help - display documentation
@@ -63,15 +85,39 @@ endif
 #      #| represents target documentation
 #      #> represents the end of documentation
 #      A special call to the Test macro also goes to targets if in the TESTS makefile if it exists.
-TESTS = tests.mk # can be overridden
 help: # default target
 	@python3 ${DEV_TOOLS}/make-help.py ${THIS_MAKEFILE} ${TESTS}
+
+#.______________________________________________________________________________
+#| * vars - display make vars of interest
+VARS :=$(sort \
+  ARCHIVE_NOW \
+  ARCHIVES \
+  ARTIFACTS \
+  AUTH_DEV \
+  AUTH_RELEASE \
+  DEV_TOOLS \
+  GIT_WORK_DIR \
+  PHONIES \
+  TESTS \
+  THIS_MAKEFILE \
+  VERS \
+)
+
+vars:
+	@$(call Info,Internal make variables)
+	@$(call Vars,${VARS})
 
 #.______________________________________________________________________________
 #| * version - check the version
 version:
 	python3 ${DEV_TOOLS}/check-version.py --show
 
+#.______________________________________________________________________________
+#| * archive - create an archive to share
+archive:
+	git archive --format=zip HEAD > ${ARCHIVE_NOW}
+	@$(call Info, Created ${ARCHIVE_NOW})
 #.______________________________________________________________________________
 #| * unpack VERS=#.#.# - extract version from archives
 unpack:
@@ -133,7 +179,7 @@ push: upload
 
 #.______________________________________________________________________________
 #| * dev - compile a development version
-${AUTH_DEBUG}: dev
+${AUTH_DEV}: dev
 dev:
 	cargo build --all-targets --all-features
 

@@ -82,35 +82,11 @@ ROOT_AUTH_ENV = AUTH_OPTIONS="-d ${AUTH_DIR} --root-dir=${ROOT_DIR}" \
                 AUTH_TEST_FALLBACK_PASSWORD_CONFIRM="${TEST_PASS}" \
                 AUTH_TEST_CURRENT_PASSWORD_OR_BURNER="${TEST_PASS}"
 
-ifdef NOCOLOR
-  RED:=
-  GRN:=
-  YLW:=
-  BLU:=
-  MAG:=
-  CYN:=
-  OFF:=
-else
-  RED:=[1;91m
-  GRN:=[1;92m
-  YLW:=[1;93m
-  BLU:=[1;94m
-  MAG:=[1;95m
-  CYN:=[1;96m
-  OFF:=[0m
-endif
-RULER := ------------------------------------------------------------
-Prompt=printf "${CYN}%% ${OFF}"
 Test=printf "${BLU}${RULER}\nTest:${CYN} $1${OFF}\n"; printf "Running $@\n"               >>"${RESULTS}"
 Passed=printf "${GRN}Test passed:${CYN} $@${OFF}\n"; printf "Passed $@\n"                 >>"${RESULTS}"
 ExpectFailed=printf "${RED}Error:${OFF} $@\n" >&2; printf "Passed $@ - $1\n"              >>"${RESULTS}"
 ExpectPassed=printf "${GRN}Success: expected failure - ${OFF} $1\n"; printf "Failed $@\n" >>"${RESULTS}"
 Gold_test=$(if $(wildcard ${GOLD_DIR}/$1),cmp $1 $2,@printf "${YLW}Missing golden file: ${OFF}$1\n")
-
-.PHONY: golden test-all test-clear test-setup test-version test-help test-write-check \
-        test-remove test-missing test-cache test-cache-reject test-request-password \
-        test-bad-password test-show-dir test-stats test-root-dir test-root-directives test-color \
-        test-auth-options test-summary
 
 #.______________________________________________________________________________
 #| * golden - create golden files [use only when you are certain]
