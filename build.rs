@@ -6,6 +6,14 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=platform/macos/auth-macos-touchid.swift");
 
+    let profile = env::var("PROFILE").unwrap_or_else(|_| "debug".to_string());
+    let build_kind = if profile == "release" {
+        "release"
+    } else {
+        "dev"
+    };
+    println!("cargo:rustc-env=AUTH_BUILD_KIND={build_kind}");
+
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     if target_os != "macos" {
         println!("cargo:rustc-env=AUTH_BUILT_MACOS_HELPER=");

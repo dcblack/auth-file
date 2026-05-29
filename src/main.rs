@@ -5,7 +5,7 @@
 
 use authlib::{
     auth_report, auth_stats, auth_storage_paths, change_fallback_password, ActionType, AuthOptions,
-    AuthorizationMode, ColorMode, VERSION,
+    AuthorizationMode, ColorMode, SecretProvider, VERSION,
 };
 use std::env;
 use std::io::{self, IsTerminal, Write};
@@ -44,6 +44,7 @@ Options
   --remove, -rm              Remove authorization[^1]
   --request-password         Require Auth password/burner instead of platform authorization
   --root-dir=PATH            Store/check paths relative to this canonical root
+  --secret-provider PROVIDER Secret provider: prompt, env, os-keyring, 1password, bitwarden
   --show-dir                 Display auth storage paths[^2]
   --silent, -s               Silent even with failure, useful in scripts
   --stats                    Display database statistics[^2]
@@ -96,6 +97,7 @@ enum CommandMode {
 }
 
 const ROOT_SPECIFIED_MORE_THAN_ONCE: &str = "Attempt to specify root directory more than once.";
+const SECRET_PROVIDER_MORE_THAN_ONCE: &str = "Attempt to specify secret provider more than once.";
 
 fn main() -> ExitCode {
     match run() {
@@ -131,7 +133,7 @@ fn handle_top_level_command(args: &[String]) -> bool {
         return true;
     }
     if args[0] == "--version" {
-        println!("auth {VERSION}");
+        println!("auth {VERSION} ({})", env!("AUTH_BUILD_KIND"));
         return true;
     }
     false
@@ -144,6 +146,7 @@ struct CliState {
     current_files: Vec<String>,
     mode: CommandMode,
     root_directive_seen: bool,
+    secret_provider_seen: bool,
 }
 
 impl Default for CliState {
@@ -155,6 +158,7 @@ impl Default for CliState {
             current_files: Vec::new(),
             mode: CommandMode::FileActions,
             root_directive_seen: false,
+            secret_provider_seen: false,
         }
     }
 }
@@ -198,6 +202,13 @@ fn parse_one_arg(args: &[String], i: &mut usize, state: &mut CliState) -> Result
         "--help" | "-h" => return Err("--help must be the first option".to_string()),
         "-q" | "--quiet" => state.options.verbose = 0,
         "--request-password" => state.options.authorization = AuthorizationMode::Password,
+        unknown if unknown.starts_with("--secret-provider=") => {
+            note_secret_provider(state)?;
+            let Some((_, provider)) = unknown.split_once('=') else {
+                return Err("--secret-provider requires --secret-provider=NAME syntax".to_string());
+            };
+            state.options.secret_provider = parse_secret_provider(provider)?;
+        }
         unknown if unknown.starts_with("--root-dir=") => {
             note_root_directive(state)?;
             let Some((_, root)) = unknown.split_once('=') else {
@@ -226,6 +237,25 @@ fn parse_one_arg(args: &[String], i: &mut usize, state: &mut CliState) -> Result
         filename => state.current_files.push(filename.to_string()),
     }
     Ok(())
+}
+
+fn note_secret_provider(state: &mut CliState) -> Result<(), String> {
+    if state.secret_provider_seen {
+        return Err(SECRET_PROVIDER_MORE_THAN_ONCE.to_string());
+    }
+    state.secret_provider_seen = true;
+    Ok(())
+}
+
+fn parse_secret_provider(provider: &str) -> Result<SecretProvider, String> {
+    match provider {
+        "prompt" => Ok(SecretProvider::Prompt),
+        "env" => Ok(SecretProvider::Env),
+        "os-keyring" => Ok(SecretProvider::OsKeyring),
+        "1password" => Ok(SecretProvider::OnePassword),
+        "bitwarden" => Ok(SecretProvider::Bitwarden),
+        _ => Err(format!("unknown secret provider: {provider}")),
+    }
 }
 
 fn note_root_directive(state: &mut CliState) -> Result<(), String> {

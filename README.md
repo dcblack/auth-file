@@ -1,3 +1,5 @@
+# auth-file 0.8.9
+
 # auth-file / `auth`
 
 `auth` is a small command-line tool and Rust library for authorizing and validating files in scripts.
@@ -290,3 +292,20 @@ auth --root-dir=/other/copy/of/tree --check /other/copy/of/tree/bin/tool
 ```
 
 `--root-dir=PATH` and `--default-root` are root directives. At most one root directive may appear across `AUTH_OPTIONS` and command-line arguments. A second root directive fails with `Error: Attempt to specify root directory more than once.`
+
+
+## Secret Providers
+
+Supported providers:
+
+- prompt (default)
+- env
+- os-keyring
+- 1password
+- bitwarden
+
+Example:
+
+```bash
+auth --secret-provider=prompt --write file.txt
+```

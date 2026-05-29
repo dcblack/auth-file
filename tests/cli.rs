@@ -3,6 +3,7 @@ use predicates::prelude::*;
 use rusqlite::Connection;
 use std::fs;
 use std::path::Path;
+use std::time::Duration;
 use tempfile::tempdir;
 
 fn path_str(path: &Path) -> &str {
@@ -38,7 +39,8 @@ fn version_option_works() {
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("auth "));
+        .stdout(predicate::str::contains("auth "))
+        .stdout(predicate::str::contains("(dev)"));
 }
 
 #[test]
@@ -699,7 +701,6 @@ fn no_root_directive_implies_default_root() {
         .success();
 }
 
-
 #[test]
 fn cache_created_once_is_reused_without_repeating_cache_time() {
     let tmp = tempdir().unwrap();
@@ -777,6 +778,37 @@ fn tampered_authorization_cache_is_ignored() {
             "--write",
             path_str(&second),
         ])
+        .assert()
+        .failure();
+}
+
+#[test]
+fn secret_provider_parses() {
+    let tmp = tempdir().unwrap();
+    let db = tmp.path().join("auth-test");
+    let file = tmp.path().join("untrusted.txt");
+    fs::write(&file, "not authorized yet\n").unwrap();
+
+    let mut cmd = auth_cmd();
+    cmd.timeout(Duration::from_secs(10))
+        .args([
+            "--secret-provider=prompt",
+            "--dir",
+            path_str(&db),
+            "--check",
+            path_str(&file),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("unknown secret provider").not());
+}
+
+#[test]
+fn duplicate_secret_provider_fails() {
+    let mut cmd = auth_cmd();
+    cmd.timeout(Duration::from_secs(10))
+        .arg("--secret-provider=prompt")
+        .arg("--secret-provider=env")
         .assert()
         .failure();
 }

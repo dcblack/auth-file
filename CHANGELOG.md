@@ -1,3 +1,10 @@
+## 0.8.9
+
+- Added `--secret-provider` support with providers: prompt, env, os-keyring, 1password, bitwarden.
+- Default provider changed to `prompt`.
+- Added WSL2-friendly behavior by avoiding implicit keyring dependency.
+- Added provider parsing tests.
+
 # Changelog
 
 All notable changes to this project will be documented in this file.

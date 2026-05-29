@@ -81,6 +81,15 @@ impl ColorMode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SecretProvider {
+    Prompt,
+    Env,
+    OsKeyring,
+    OnePassword,
+    Bitwarden,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuthorizationMode {
     /// Do not ask for biometric/PAM/Hello approval. Useful for tests only.
     None,
@@ -100,6 +109,7 @@ pub struct AuthOptions {
     pub color: ColorMode,
     pub cache_seconds: u64,
     pub root_dir: Option<PathBuf>,
+    pub secret_provider: SecretProvider,
 }
 
 impl Default for AuthOptions {
@@ -113,6 +123,7 @@ impl Default for AuthOptions {
             color: ColorMode::Auto,
             cache_seconds: 0,
             root_dir: None,
+            secret_provider: SecretProvider::OsKeyring,
         }
     }
 }
@@ -272,101 +283,146 @@ pub fn auth_report(
     let conn = open_database(&options.db_dir)?;
     let allow_key_create = database_was_missing || records_table_is_empty(&conn)?;
     let mut report = AuthReport::default();
-    let keys = DbKeys::load_or_create(&options.db_dir, &conn, allow_key_create)?;
-    ensure_recovery_initialized(&conn, &options.db_dir, &keys)?;
+    let keys = DbKeys::load_or_create(
+        &options.db_dir,
+        &conn,
+        allow_key_create,
+        options.secret_provider,
+    )?;
 
-    if matches!(action, ActionType::Write | ActionType::Remove)
-        && options.authorization != AuthorizationMode::None
-    {
-        authorize_or_use_cache(&conn, &options.db_dir, &keys, options)?;
+    if matches!(action, ActionType::Write | ActionType::Remove) {
+        ensure_recovery_initialized(&conn, &options.db_dir, &keys)?;
+
+        if options.authorization != AuthorizationMode::None {
+            authorize_or_use_cache(&conn, &options.db_dir, &keys, options)?;
+        }
     }
 
     for file in file_list {
-        let path = PathBuf::from(&file);
-        if !is_readable_file(&path) && action != ActionType::Remove {
+        process_auth_report_file(action, &file, options, &conn, &keys, &mut report);
+    }
+    Ok(report)
+}
+
+fn process_auth_report_file(
+    action: ActionType,
+    file: &str,
+    options: &AuthOptions,
+    conn: &Connection,
+    keys: &DbKeys,
+    report: &mut AuthReport,
+) {
+    let path = PathBuf::from(file);
+    if !is_readable_file(&path) && action != ActionType::Remove {
+        report.failed += 1;
+        if options.verbose >= 0 {
+            eprintln!(
+                "{}",
+                options.colorize_error(&format!("Error: unable to read {}", path.display()))
+            );
+        }
+        return;
+    }
+
+    match action {
+        ActionType::Write => process_write_action(conn, &path, keys, options, report),
+        ActionType::Check => process_check_action(conn, &path, keys, options, report),
+        ActionType::Remove => process_remove_action(conn, &path, keys, options, report),
+    }
+}
+
+fn process_write_action(
+    conn: &Connection,
+    path: &Path,
+    keys: &DbKeys,
+    options: &AuthOptions,
+    report: &mut AuthReport,
+) {
+    match write_record(conn, path, keys, options) {
+        Ok(()) => {
+            report.written += 1;
+            if options.verbose > 0 {
+                eprintln!(
+                    "{}",
+                    options.colorize_pass(&format!("Pass: authorized {}", path.display()))
+                );
+            }
+        }
+        Err(e) => {
             report.failed += 1;
+            if options.verbose >= 0 {
+                eprintln!("{}", options.colorize_error(&format!("Error: {e}")));
+            }
+        }
+    }
+}
+
+fn process_check_action(
+    conn: &Connection,
+    path: &Path,
+    keys: &DbKeys,
+    options: &AuthOptions,
+    report: &mut AuthReport,
+) {
+    report.checked += 1;
+    match check_record(conn, path, keys, options) {
+        Ok(()) => {
+            report.passed += 1;
+            if options.verbose > 0 {
+                eprintln!(
+                    "{}",
+                    options.colorize_pass(&format!("Pass: {} passes", path.display()))
+                );
+            }
+        }
+        Err(e) => {
+            report.failed += 1;
+            if options.verbose >= 0 {
+                eprintln!("{}", options.colorize_error(&format!("Error: {e}")));
+            }
+        }
+    }
+}
+
+fn process_remove_action(
+    conn: &Connection,
+    path: &Path,
+    keys: &DbKeys,
+    options: &AuthOptions,
+    report: &mut AuthReport,
+) {
+    match remove_record(conn, path, keys, options) {
+        Ok(true) => {
+            report.removed += 1;
+            if options.verbose > 0 {
+                eprintln!(
+                    "{}",
+                    options.colorize_pass(&format!(
+                        "Pass: removed authorization for {}",
+                        path.display()
+                    ))
+                );
+            }
+        }
+        Ok(false) => {
+            report.skipped += 1;
             if options.verbose >= 0 {
                 eprintln!(
                     "{}",
-                    options.colorize_error(&format!("Error: unable to read {}", path.display()))
+                    options.colorize_warning(&format!(
+                        "Warning: no authorization record for {}",
+                        path.display()
+                    ))
                 );
             }
-            continue;
         }
-
-        match action {
-            ActionType::Write => match write_record(&conn, &path, &keys, options) {
-                Ok(()) => {
-                    report.written += 1;
-                    if options.verbose > 0 {
-                        eprintln!(
-                            "{}",
-                            options.colorize_pass(&format!("Pass: authorized {}", path.display()))
-                        );
-                    }
-                }
-                Err(e) => {
-                    report.failed += 1;
-                    if options.verbose >= 0 {
-                        eprintln!("{}", options.colorize_error(&format!("Error: {e}")));
-                    }
-                }
-            },
-            ActionType::Check => {
-                report.checked += 1;
-                match check_record(&conn, &path, &keys, options) {
-                    Ok(()) => {
-                        report.passed += 1;
-                        if options.verbose > 0 {
-                            eprintln!(
-                                "{}",
-                                options.colorize_pass(&format!("Pass: {} passes", path.display()))
-                            );
-                        }
-                    }
-                    Err(e) => {
-                        report.failed += 1;
-                        if options.verbose >= 0 {
-                            eprintln!("{}", options.colorize_error(&format!("Error: {e}")));
-                        }
-                    }
-                }
+        Err(e) => {
+            report.failed += 1;
+            if options.verbose >= 0 {
+                eprintln!("{}", options.colorize_error(&format!("Error: {e}")));
             }
-            ActionType::Remove => match remove_record(&conn, &path, &keys, options) {
-                Ok(true) => {
-                    report.removed += 1;
-                    if options.verbose > 0 {
-                        eprintln!(
-                            "{}",
-                            options.colorize_pass(&format!(
-                                "Pass: removed authorization for {}",
-                                path.display()
-                            ))
-                        );
-                    }
-                }
-                Ok(false) => {
-                    report.skipped += 1;
-                    if options.verbose >= 0 {
-                        eprintln!(
-                            "{}",
-                            options.colorize_warning(&format!(
-                                "Warning: no authorization record for {}",
-                                path.display()
-                            ))
-                        );
-                    }
-                }
-                Err(e) => {
-                    report.failed += 1;
-                    if options.verbose >= 0 {
-                        eprintln!("{}", options.colorize_error(&format!("Error: {e}")));
-                    }
-                }
-            },
         }
     }
-    Ok(report)
 }
 
 struct DbKeys {
@@ -380,11 +436,102 @@ impl DbKeys {
         db_dir: &Path,
         conn: &Connection,
         allow_create: bool,
+        provider: SecretProvider,
     ) -> Result<Self, AuthError> {
         if is_test_database_dir(db_dir) {
             return Self::load_or_create_test_files(db_dir, allow_create);
         }
-        Self::load_or_create_keyring(db_dir, conn, allow_create)
+        match provider {
+            SecretProvider::OsKeyring => Self::load_or_create_keyring(db_dir, conn, allow_create),
+            SecretProvider::Prompt => Self::load_or_create_prompt(db_dir, conn, allow_create),
+            SecretProvider::Env | SecretProvider::OnePassword | SecretProvider::Bitwarden => {
+                Self::load_from_external_provider(db_dir, provider)
+            }
+        }
+    }
+
+    fn from_key_material(
+        signing_bytes: Vec<u8>,
+        path_hmac_secret: Vec<u8>,
+    ) -> Result<Self, AuthError> {
+        let signing_array: [u8; 32] = signing_bytes
+            .try_into()
+            .map_err(|_| AuthError::InvalidSigningKey)?;
+        let signing = SigningKey::from_bytes(&signing_array);
+        let verifying = signing.verifying_key();
+        Ok(Self {
+            signing,
+            verifying,
+            path_hmac_secret,
+        })
+    }
+
+    fn load_or_create_prompt(
+        db_dir: &Path,
+        conn: &Connection,
+        allow_create: bool,
+    ) -> Result<Self, AuthError> {
+        if recovery_is_configured(conn)? {
+            let password = prompt_existing_password(db_dir, "Auth password: ")?;
+            let bundle = decrypt_key_bundle(conn, &password)?;
+            let signing = B64
+                .decode(bundle.signing_key_b64.as_bytes())
+                .map_err(|e| AuthError::KeyDecode(e.to_string()))?;
+            let path_hmac = B64
+                .decode(bundle.path_hmac_secret_b64.as_bytes())
+                .map_err(|e| AuthError::KeyDecode(e.to_string()))?;
+            let keys = Self::from_key_material(signing, path_hmac)?;
+            write_public_file(
+                &db_dir.join(PUBKEY_FILE),
+                keys.verifying.to_bytes().as_slice(),
+            )?;
+            return Ok(keys);
+        }
+
+        if allow_create {
+            if test_new_passwords(db_dir).is_none() && !io::stdin().is_terminal() {
+                return Err(AuthError::KeyStorage(
+                    "prompt secret provider cannot initialize a new non-interactive database; use --secret-provider=os-keyring or run from an interactive terminal".to_string(),
+                ));
+            }
+            let signing = SigningKey::generate(&mut OsRng);
+            let verifying = signing.verifying_key();
+            let mut path_hmac_secret = vec![0_u8; 32];
+            OsRng.fill_bytes(&mut path_hmac_secret);
+            write_public_file(&db_dir.join(PUBKEY_FILE), verifying.to_bytes().as_slice())?;
+            return Ok(Self {
+                signing,
+                verifying,
+                path_hmac_secret,
+            });
+        }
+
+        Err(AuthError::PasswordNotConfigured)
+    }
+
+    fn load_from_external_provider(
+        db_dir: &Path,
+        provider: SecretProvider,
+    ) -> Result<Self, AuthError> {
+        let namespace = key_namespace(db_dir);
+        let signing_name = format!("{namespace}:ed25519-signing");
+        let path_name = format!("{namespace}:path-hmac");
+        let signing = get_secret_from_provider(provider, &signing_name)?.ok_or_else(|| {
+            AuthError::KeyStorage(format!(
+                "secret provider did not return secret: {signing_name}"
+            ))
+        })?;
+        let path_hmac = get_secret_from_provider(provider, &path_name)?.ok_or_else(|| {
+            AuthError::KeyStorage(format!(
+                "secret provider did not return secret: {path_name}"
+            ))
+        })?;
+        let keys = Self::from_key_material(signing, path_hmac)?;
+        write_public_file(
+            &db_dir.join(PUBKEY_FILE),
+            keys.verifying.to_bytes().as_slice(),
+        )?;
+        Ok(keys)
     }
 
     fn load_or_create_keyring(
@@ -396,9 +543,12 @@ impl DbKeys {
         let signing_name = format!("{namespace}:ed25519-signing");
         let path_name = format!("{namespace}:path-hmac");
 
-        let signing_bytes = match get_or_create_secret(&signing_name, allow_create, || {
-            SigningKey::generate(&mut OsRng).to_bytes().to_vec()
-        }) {
+        let signing_bytes = match get_or_create_secret(
+            SecretProvider::OsKeyring,
+            &signing_name,
+            allow_create,
+            || SigningKey::generate(&mut OsRng).to_bytes().to_vec(),
+        ) {
             Ok(bytes) => bytes,
             Err(e) if !allow_create => {
                 restore_keyring_from_recovery(conn, db_dir, &signing_name, &path_name)
@@ -419,11 +569,12 @@ impl DbKeys {
 
         write_public_file(&db_dir.join(PUBKEY_FILE), verifying.to_bytes().as_slice())?;
 
-        let path_hmac_secret = get_or_create_secret(&path_name, allow_create, || {
-            let mut key = vec![0_u8; 32];
-            OsRng.fill_bytes(&mut key);
-            key
-        })?;
+        let path_hmac_secret =
+            get_or_create_secret(SecretProvider::OsKeyring, &path_name, allow_create, || {
+                let mut key = vec![0_u8; 32];
+                OsRng.fill_bytes(&mut key);
+                key
+            })?;
 
         Ok(Self {
             signing,
@@ -488,7 +639,7 @@ impl DbKeys {
 pub fn change_fallback_password(options: &AuthOptions) -> Result<AuthPasswordUpdate, AuthError> {
     ensure_storage(&options.db_dir)?;
     let conn = open_database(&options.db_dir)?;
-    let keys = DbKeys::load_or_create(&options.db_dir, &conn, false)?;
+    let keys = DbKeys::load_or_create(&options.db_dir, &conn, false, options.secret_provider)?;
     authenticate_with_fallback_or_burner(&conn, &options.db_dir)?;
     configure_recovery_password(&conn, &options.db_dir, &keys, true)
 }
@@ -531,7 +682,12 @@ fn prepare_database_for_protected_command(
     ensure_storage(&options.db_dir)?;
     let conn = open_database(&options.db_dir)?;
     let allow_key_create = database_was_missing || records_table_is_empty(&conn)?;
-    let keys = DbKeys::load_or_create(&options.db_dir, &conn, allow_key_create)?;
+    let keys = DbKeys::load_or_create(
+        &options.db_dir,
+        &conn,
+        allow_key_create,
+        options.secret_provider,
+    )?;
     ensure_recovery_initialized(&conn, &options.db_dir, &keys)?;
     Ok((conn, keys))
 }
@@ -1405,11 +1561,94 @@ fn store_secret(name: &str, secret: &[u8]) -> Result<(), AuthError> {
         .map_err(|e| AuthError::KeyStorage(e.to_string()))
 }
 
+fn secret_provider_env(name: &str) -> String {
+    format!(
+        "AUTH_SECRET_{}",
+        name.chars()
+            .map(|c| if c.is_ascii_alphanumeric() {
+                c.to_ascii_uppercase()
+            } else {
+                '_'
+            })
+            .collect::<String>()
+    )
+}
+
+fn decode_provider_secret(name: &str, raw: &[u8]) -> Result<Vec<u8>, AuthError> {
+    let text = std::str::from_utf8(raw)
+        .map_err(|e| {
+            AuthError::KeyDecode(format!(
+                "secret provider returned non-UTF-8 for {name}: {e}"
+            ))
+        })?
+        .trim();
+    B64.decode(text.as_bytes()).map_err(|e| {
+        AuthError::KeyDecode(format!(
+            "secret provider returned invalid base64 for {name}: {e}"
+        ))
+    })
+}
+
+fn get_secret_from_provider(
+    provider: SecretProvider,
+    name: &str,
+) -> Result<Option<Vec<u8>>, AuthError> {
+    match provider {
+        SecretProvider::Prompt | SecretProvider::OsKeyring => Ok(None),
+        SecretProvider::Env => {
+            let env_name = secret_provider_env(name);
+            let value = std::env::var(&env_name).map_err(|_| {
+                AuthError::KeyStorage(format!(
+                    "missing environment variable for secret provider: {env_name}"
+                ))
+            })?;
+            decode_provider_secret(name, value.as_bytes()).map(Some)
+        }
+        SecretProvider::OnePassword => {
+            let output = std::process::Command::new("op")
+                .arg("read")
+                .arg(format!("op://Private/{name}/password"))
+                .output()
+                .map_err(|e| AuthError::KeyStorage(format!("failed to execute op: {e}")))?;
+            if !output.status.success() {
+                return Err(AuthError::KeyStorage(
+                    "1Password CLI returned failure".to_string(),
+                ));
+            }
+            decode_provider_secret(name, &output.stdout).map(Some)
+        }
+        SecretProvider::Bitwarden => {
+            if std::env::var_os("BW_SESSION").is_none() {
+                return Err(AuthError::KeyStorage(
+                    "Bitwarden provider requires BW_SESSION; run `bw unlock` and export the session key".to_string(),
+                ));
+            }
+            let output = std::process::Command::new("bw")
+                .arg("get")
+                .arg("password")
+                .arg(name)
+                .output()
+                .map_err(|e| AuthError::KeyStorage(format!("failed to execute bw: {e}")))?;
+            if !output.status.success() {
+                return Err(AuthError::KeyStorage(
+                    "Bitwarden CLI returned failure".to_string(),
+                ));
+            }
+            decode_provider_secret(name, &output.stdout).map(Some)
+        }
+    }
+}
+
 fn get_or_create_secret(
+    provider: SecretProvider,
     name: &str,
     allow_create: bool,
     generate: impl FnOnce() -> Vec<u8>,
 ) -> Result<Vec<u8>, AuthError> {
+    if let Some(secret) = get_secret_from_provider(provider, name)? {
+        return Ok(secret);
+    }
+
     let entry = keyring::Entry::new(KEYRING_SERVICE, name)
         .map_err(|e| AuthError::KeyStorage(e.to_string()))?;
 
@@ -1754,6 +1993,7 @@ mod tests {
             color: ColorMode::Never,
             cache_seconds: 0,
             root_dir: None,
+            secret_provider: SecretProvider::Prompt,
         }
     }
 
@@ -1967,7 +2207,7 @@ mod tests {
         let db = tmp.path().join("auth-test");
         fs::create_dir_all(&db).unwrap();
         let conn = open_database(&db).unwrap();
-        let keys = DbKeys::load_or_create(&db, &conn, true).unwrap();
+        let keys = DbKeys::load_or_create(&db, &conn, true, SecretProvider::OsKeyring).unwrap();
         configure_recovery_password_with_password(&conn, &db, &keys, "Long-Test-Password-2026!")
             .unwrap();
         let burner = "Burner-Test-2026!";
@@ -2017,5 +2257,20 @@ mod tests {
         .unwrap();
         assert!(ck.ok());
         assert_eq!(ck.passed, 1);
+    }
+
+    #[test]
+    fn secret_provider_env_name_is_stable() {
+        assert_eq!(
+            secret_provider_env("db-abcd:ed25519-signing"),
+            "AUTH_SECRET_DB_ABCD_ED25519_SIGNING"
+        );
+    }
+
+    #[test]
+    fn provider_secret_decodes_trimmed_base64() {
+        let raw = format!("{}\n", B64.encode([7_u8; 32]));
+        let decoded = decode_provider_secret("test-secret", raw.as_bytes()).unwrap();
+        assert_eq!(decoded, vec![7_u8; 32]);
     }
 }

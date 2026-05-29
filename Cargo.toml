@@ -1,6 +1,6 @@
 [package]
 name = "auth-file"
-version = "0.8.8"
+version = "0.8.9"
 edition = "2021"
 authors = ["David Black <dcblack@mac.com>"]
 rust-version = "1.78"
