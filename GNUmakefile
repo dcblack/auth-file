@@ -31,8 +31,8 @@ SHELL = /bin/bash
 GIT_EXE  = $(shell command -v git)
 GREP_EXE  = $(firstword $(shell command -v ggrep) $(shell command -v grep))
 TOP_MAKEFILE := $(realpath $(lastword $(MAKEFILE_LIST)))
-TESTS ?= tests.mk # can be overridden
-SEED  ?= 0
+TESTS = tests.mk # can be overridden
+SEED  = 0
 PHONIES := $(sort $(shell perl -lane 'print $$1 if m{^([a-zA-Z][-a-zA-Z0-9_]*):[^=]*$$};' ${TOP_MAKEFILE} ${TESTS}))
 
 .PHONY: $(PHONIES)
@@ -51,7 +51,7 @@ AUDIT_DIR      := ${ARTIFACTS}/audit
 AUDIT_FULLPATH := ${AUDIT_DIR}/audit.txt
 AUTH_DEV       := ${GIT_WORK_DIR}/target/debug/auth
 AUTH_RELEASE   := ${GIT_WORK_DIR}/target/release/auth
-TEST_LIST := $(shell randlist --seed-file=${ARTIFACTS}/seed.txt --seed ${SEED} $(filter test-%,$(shell perl -lane 'print $$1 if m{^([a-zA-Z][-a-zA-Z0-9_]*):[^=]*$$};' ${TESTS})))
+TEST_LIST := $(shell ${DEV_TOOLS}/shuffle --save=${ARTIFACTS}/seed.txt --seed=${SEED} $(filter test-%,$(shell perl -lane 'print $$1 if m{^([a-zA-Z][-a-zA-Z0-9_]*):[^=]*$$};' ${TESTS})))
 
 ifdef VERS
   ifeq ($(words ${VERS}),0)
