@@ -1,3 +1,8 @@
+## 0.8.10
+
+- Added additional regression tests for read-only `--check`, cache semantics, and `setup.profile` tamper detection.
+- Added WSL2-friendly fallback from unavailable OS keyring storage to the prompt/Auth-password provider when appropriate.
+
 ## 0.8.9
 
 - Added `--secret-provider` support with providers: prompt, env, os-keyring, 1password, bitwarden.

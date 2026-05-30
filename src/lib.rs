@@ -4,8 +4,8 @@
 //! - `Write` and `Remove` may require user authorization.
 //! - `Check` verifies stored cryptographic records without prompting.
 //!
-//! Version 0.8.6 stores authorization records in `SQLite` and moves normal-use
-//! secret keys into the platform credential store. Version 0.8.6 adds an
+//! Version 0.8.10 stores authorization records in `SQLite` and moves normal-use
+//! secret keys into the platform credential store. Version 0.8.10 adds an
 //! Argon2id-protected auth password and one-time burner passwords for
 //! recovery when platform authorization is unavailable. Test databases named
 //! `auth-test` keep file-backed keys for CI and development only.
@@ -442,7 +442,25 @@ impl DbKeys {
             return Self::load_or_create_test_files(db_dir, allow_create);
         }
         match provider {
-            SecretProvider::OsKeyring => Self::load_or_create_keyring(db_dir, conn, allow_create),
+            SecretProvider::OsKeyring => {
+                match Self::load_or_create_keyring(db_dir, conn, allow_create) {
+                    Ok(keys) => Ok(keys),
+                    Err(AuthError::KeyStorage(keyring_error)) => {
+                        if should_fallback_to_prompt_provider(db_dir, conn)? {
+                            Self::load_or_create_prompt(db_dir, conn, allow_create).map_err(
+                                |prompt_error| {
+                                    AuthError::KeyStorage(format!(
+                                    "{keyring_error}; prompt fallback also failed: {prompt_error}"
+                                ))
+                                },
+                            )
+                        } else {
+                            Err(AuthError::KeyStorage(keyring_error))
+                        }
+                    }
+                    Err(e) => Err(e),
+                }
+            }
             SecretProvider::Prompt => Self::load_or_create_prompt(db_dir, conn, allow_create),
             SecretProvider::Env | SecretProvider::OnePassword | SecretProvider::Bitwarden => {
                 Self::load_from_external_provider(db_dir, provider)
@@ -1588,6 +1606,31 @@ fn decode_provider_secret(name: &str, raw: &[u8]) -> Result<Vec<u8>, AuthError> 
     })
 }
 
+fn should_fallback_to_prompt_provider(db_dir: &Path, conn: &Connection) -> Result<bool, AuthError> {
+    Ok(is_wsl_environment()
+        || recovery_is_configured(conn)?
+        || test_new_passwords(db_dir).is_some()
+        || io::stdin().is_terminal())
+}
+
+#[cfg(target_os = "linux")]
+fn is_wsl_environment() -> bool {
+    if std::env::var_os("WSL_DISTRO_NAME").is_some() {
+        return true;
+    }
+
+    let Ok(version) = fs::read_to_string("/proc/version") else {
+        return false;
+    };
+    let version = version.to_ascii_lowercase();
+    version.contains("microsoft") || version.contains("wsl")
+}
+
+#[cfg(not(target_os = "linux"))]
+fn is_wsl_environment() -> bool {
+    false
+}
+
 fn get_secret_from_provider(
     provider: SecretProvider,
     name: &str,
@@ -2271,5 +2314,40 @@ mod tests {
         let raw = format!("{}\n", B64.encode([7_u8; 32]));
         let decoded = decode_provider_secret("test-secret", raw.as_bytes()).unwrap();
         assert_eq!(decoded, vec![7_u8; 32]);
+    }
+
+    #[test]
+    fn explicit_check_does_not_update_last_check_metadata() {
+        let tmp = tempdir().unwrap();
+        let db = tmp.path().join("auth-test");
+        let file = tmp.path().join("read-only-check.txt");
+        fs::write(&file, "contents\n").unwrap();
+
+        auth_report(
+            ActionType::Write,
+            vec![file.to_string_lossy().into_owned()],
+            &test_options(&db),
+        )
+        .unwrap();
+
+        let conn = open_database(&db).unwrap();
+        assert_eq!(metadata_utc(&conn, "last_check_unix").unwrap(), None);
+
+        let report = auth_report(
+            ActionType::Check,
+            vec![file.to_string_lossy().into_owned()],
+            &test_options(&db),
+        )
+        .unwrap();
+
+        assert!(report.ok());
+        let conn = open_database(&db).unwrap();
+        assert_eq!(metadata_utc(&conn, "last_check_unix").unwrap(), None);
+    }
+
+    #[test]
+    fn wsl_detection_is_false_on_non_linux_platforms() {
+        #[cfg(not(target_os = "linux"))]
+        assert!(!is_wsl_environment());
     }
 }

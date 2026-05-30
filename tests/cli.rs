@@ -738,6 +738,62 @@ fn check_with_cache_time_does_not_request_password() {
 }
 
 #[test]
+fn check_with_request_password_does_not_request_password() {
+    let tmp = tempdir().unwrap();
+    let db = tmp.path().join("auth-test");
+    let file = tmp.path().join("request-password-check.txt");
+    fs::write(&file, "contents\n").unwrap();
+
+    auth_cmd()
+        .args([
+            "--dir",
+            path_str(&db),
+            "--request-password",
+            "--write",
+            path_str(&file),
+        ])
+        .assert()
+        .success();
+
+    Command::cargo_bin("auth")
+        .unwrap()
+        .env("AUTH_OPTIONS", format!("-d {}", db.display()))
+        .env_remove("AUTH_TEST_CURRENT_PASSWORD_OR_BURNER")
+        .env_remove("AUTH_TEST_FALLBACK_PASSWORD")
+        .env_remove("AUTH_TEST_FALLBACK_PASSWORD_CONFIRM")
+        .args(["--request-password", "--check", path_str(&file)])
+        .assert()
+        .success();
+}
+
+#[test]
+fn safe_setup_profile_check_blocks_changed_file() {
+    let tmp = tempdir().unwrap();
+    let db = tmp.path().join("auth-test");
+    let profile = tmp.path().join("setup.profile");
+    fs::write(&profile, "export SAFE_SETUP_PROFILE=1\n").unwrap();
+
+    auth_cmd()
+        .args([
+            "--dir",
+            path_str(&db),
+            "--request-password",
+            "--write",
+            path_str(&profile),
+        ])
+        .assert()
+        .success();
+
+    fs::write(&profile, "export SAFE_SETUP_PROFILE=0\n").unwrap();
+
+    auth_cmd()
+        .args(["--dir", path_str(&db), "--check", path_str(&profile)])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("content digest mismatch"));
+}
+
+#[test]
 fn cache_created_once_is_reused_without_repeating_cache_time() {
     let tmp = tempdir().unwrap();
     let db = tmp.path().join("auth-test");

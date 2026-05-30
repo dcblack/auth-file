@@ -58,8 +58,12 @@
 # These targets intentionally exercise the installed/current auth binary rather
 # than Cargo integration tests. Override AUTH to test a different binary:
 #
-#   make test-all AUTH=/path/to/auth
-#
+#   make tests-all AUTH=/path/to/auth
+
+# NOTE: Individual test targets must be named test-<NAME>.
+#       Targets beginning with tests- (plural) are for setup and teardown.
+#       This naming convention allows automatic collection for the TEST_LIST.
+
 AUTH       ?= ${GIT_WORK_DIR}/target/debug/auth
 GOLD_DIR   = ${GIT_WORK_DIR}/golden
 TEST_DIR   = /tmp/auth-file-manual-tests
@@ -81,17 +85,17 @@ ROOT_AUTH_ENV = AUTH_OPTIONS="-d ${AUTH_DIR} --root-dir=${ROOT_DIR}" \
                 AUTH_TEST_FALLBACK_PASSWORD="${TEST_PASS}" \
                 AUTH_TEST_FALLBACK_PASSWORD_CONFIRM="${TEST_PASS}" \
                 AUTH_TEST_CURRENT_PASSWORD_OR_BURNER="${TEST_PASS}"
-
 Test=printf "${BLU}${RULER}\nTest:${CYN} $1${OFF}\n"; printf "Running $@\n"               >>"${RESULTS}"
+Tests=printf "${BLU}${RULER}\nTest setup:${CYN} $1${OFF}\n"; printf "Running $@\n"               >>"${RESULTS}"
 Passed=printf "${GRN}Test passed:${CYN} $@${OFF}\n"; printf "Passed $@\n"                 >>"${RESULTS}"
-ExpectFailed=printf "${RED}Error:${OFF} $@\n" >&2; printf "Passed $@ - $1\n"              >>"${RESULTS}"
-ExpectPassed=printf "${GRN}Success: expected failure - ${OFF} $1\n"; printf "Failed $@\n" >>"${RESULTS}"
+FailedExpectation=printf "${RED}Error:${OFF} $@\n" >&2; printf "Failed $@ - $1\n"              >>"${RESULTS}"
+PassedExpectation=printf "${GRN}Success: expected $@ to fail - ${OFF} $1\n"; printf "Passed $@\n" >>"${RESULTS}"
 Gold_test=$(if $(wildcard ${GOLD_DIR}/$1),cmp $1 $2,@printf "${YLW}Missing golden file: ${OFF}$1\n")
 
 #.______________________________________________________________________________
 #| * golden - create golden files [use only when you are certain]
 golden:
-	@$(call Test,Create golden files)
+	@$(call Info,Make $@)
 	@$(call Prompt)
 	mkdir -p ${GOLD_DIR}
 	@$(call Prompt)
@@ -100,16 +104,13 @@ golden:
 	PAGER=cat "${AUTH}" --help >"${GOLD_DIR}/help.txt"
 
 #.______________________________________________________________________________
-#| * test-all - run all manual CLI tests
-test-all: test-clear test-setup test-version test-help test-write-check test-remove \
-          test-missing test-cache test-cache-reject test-request-password \
-          test-bad-password test-show-dir test-stats test-root-dir test-root-directives test-color \
-          test-auth-options test-summary
+#| * tests-all - run all manual CLI tests
+tests-all: tests-clear tests-setup ${TEST_LIST} tests-summary
 
 #.______________________________________________________________________________
-#| * test-clear - remove manual test directories and artifacts
-test-clear:
-	@$(call Test,Remove database and all manual test files)
+#| * tests-clear - remove manual test directories and artifacts
+tests-clear:
+	@$(call Tests,Remove database and all manual test files)
 	@$(call Prompt)
 	rm -fr "${TEST_DIR}" # remove database
 	@$(call Prompt)
@@ -118,9 +119,9 @@ test-clear:
 	mkdir -p "${ART_DIR}" && date >"${RESULTS}"
 
 #.______________________________________________________________________________
-#| * test-setup - build auth and create deterministic test files
-test-setup:
-	@$(call Test,Set up)
+#| * tests-setup - build auth and create deterministic test files
+tests-setup:
+	@$(call Test,$@)
 	@$(call Prompt)
 	cargo build
 	@$(call Prompt)
@@ -136,7 +137,7 @@ test-setup:
 #.______________________________________________________________________________
 #| * test-version - test --version
 test-version:
-	@$(call Test,Version)
+	@$(call Test,$@)
 	@$(call Prompt)
 	"${AUTH}" --version | tee ${ART_DIR}/version.txt
 	$(call Gold_test,"version.txt","${ART_DIR}/version.txt")
@@ -145,7 +146,7 @@ test-version:
 #.______________________________________________________________________________
 #| * test-help - test --help and -h
 test-help:
-	@$(call Test,Help)
+	@$(call Test,$@)
 	@$(call Prompt)
 	PAGER=cat "${AUTH}" --help >"${ART_DIR}/help-long.txt"
 	@$(call Prompt)
@@ -158,7 +159,7 @@ test-help:
 #.______________________________________________________________________________
 #| * test-write-check - write and check several files
 test-write-check:
-	@$(call Test,Write and check several files)
+	@$(call Test,$@)
 	@$(call Prompt)
 	${AUTH_ENV} "${AUTH}" --request-password --write "${TEST_DIR}/file1" "${TEST_DIR}/file2"
 	@$(call Prompt)
@@ -170,39 +171,52 @@ test-write-check:
 #.______________________________________________________________________________
 #| * test-remove - remove one authorization and confirm it fails check
 test-remove:
-	@$(call Test,Remove one authorized file)
+	@$(call Test,$@)
 	@$(call Prompt)
 	${AUTH_ENV} "${AUTH}" --request-password --write "${TEST_DIR}/file3"
 	@$(call Prompt)
 	${AUTH_ENV} "${AUTH}" --request-password --remove "${TEST_DIR}/file3"
 	@$(call Prompt)
 	if ${AUTH_ENV} "${AUTH}" --check "${TEST_DIR}/file3"; then \
-	  $(call ExpectPassed,Expected removed file check to fail); \
+	  $(call FailedExpectation,Expected removed file check to fail); \
 	else \
-	  $(call ExpectFailed,removed file no longer checks); \
+	  $(call PassedExpectation,removed file no longer checks); \
 	fi
 
 #.______________________________________________________________________________
 #| * test-missing - check unauthorized and nonexistent files
 test-missing:
-	@$(call Test,Unauthorized and nonexistent files)
+	@$(call Test,$@)
 	@$(call Prompt)
+	${AUTH_ENV} "${AUTH}" --request-password --remove "${TEST_DIR}/file4"
 	if ${AUTH_ENV} "${AUTH}" --check "${TEST_DIR}/file4"; then \
-	  $(call ExpectPassed,Expected unauthorized file check to fail); \
+	  $(call FailedExpectation,Expected unauthorized file check to fail); \
 	else \
-	  $(call ExpectFailed,unauthorized file rejected); \
+	  $(call PassedExpectation,unauthorized file rejected); \
 	fi
 	@$(call Prompt)
 	if ${AUTH_ENV} "${AUTH}" --check "${TEST_DIR}/does-not-exist"; then \
-	  $(call ExpectPassed,Expected missing file check to fail); \
+	  $(call FailedExpectation,Expected missing file check to fail); \
 	else \
-	  $(call ExpectFailed,nonexistent file rejected); \
+	  $(call PassedExpectation,nonexistent file rejected); \
 	fi
+
+
+#.______________________________________________________________________________
+#| * test-check-no-auth - --check must not request authorization or auth password
+test-check-no-auth:
+	@$(call Test,$@)
+	@$(call Prompt)
+	${AUTH_ENV} "${AUTH}" --request-password --write "${TEST_DIR}/file1"
+	@$(call Prompt)
+	env AUTH_OPTIONS="-d ${AUTH_DIR}" \
+	    "${AUTH}" --request-password --cache-time=60 --check "${TEST_DIR}/file1"
+	@$(call Passed)
 
 #.______________________________________________________________________________
 #| * test-cache - verify --cache-time=60 avoids repeated authorization prompts
 test-cache:
-	@$(call Test,Authorization cache)
+	@$(call Test,$@)
 	@$(call Prompt)
 	${AUTH_ENV} "${AUTH}" --request-password --cache-time=60 --write "${TEST_DIR}/file4"
 	@$(call Prompt)
@@ -213,18 +227,18 @@ test-cache:
 #.______________________________________________________________________________
 #| * test-cache-reject - verify --cache-time rejects values above 120
 test-cache-reject:
-	@$(call Test,Reject --cache-time=121)
+	@$(call Test,$@)
 	@$(call Prompt)
 	if ${AUTH_ENV} "${AUTH}" --request-password --cache-time=121 --write "${TEST_DIR}/file1"; then \
-	  $(call ExpectPassed,Expected --cache-time=121 to fail); \
+	  $(call FailedExpectation,Expected --cache-time=121 to fail); \
 	else \
-	  $(call ExpectFailed,--cache-time=121 rejected); \
+	  $(call PassedExpectation,--cache-time=121 rejected); \
 	fi
 
 #.______________________________________________________________________________
 #| * test-request-password - force password route explicitly
 test-request-password:
-	@$(call Test,Request password route)
+	@$(call Test,$@)
 	@$(call Prompt)
 	${AUTH_ENV} "${AUTH}" --request-password --write "${TEST_DIR}/file1"
 	@$(call Passed)
@@ -232,20 +246,20 @@ test-request-password:
 #.______________________________________________________________________________
 #| * test-bad-password - wrong password should fail when no cache is present
 test-bad-password:
-	@$(call Test,Bad auth password)
+	@$(call Test,$@)
 	@$(call Prompt)
 	if env AUTH_OPTIONS="-d ${AUTH_DIR}" \
 	    AUTH_TEST_CURRENT_PASSWORD_OR_BURNER="${BAD_PASS}" \
-	    "${AUTH}" --request-password --cache-time=0 --write "${TEST_DIR}/file1"; then \
-	  $(call ExpectFailed,Expected bad password to fail); \
+	    "${AUTH}" --request-password --cache-time=0 --write "${TEST_DIR}/file1" ; then \
+	  $(call FailedExpectation,Bad auth password returned OK!); \
 	else \
-	  $(call ExpectPassed, bad auth password rejected); \
+	  $(call PassedExpectation, Bad auth password rejected); \
 	fi
 
 #.______________________________________________________________________________
 #| * test-show-dir - authorized --show-dir
 test-show-dir:
-	@$(call Test,Show directory)
+	@$(call Test,$@)
 	@$(call Prompt)
 	${AUTH_ENV} "${AUTH}" --request-password --show-dir >"${ART_DIR}/show-dir.txt"
 	@$(call Prompt)
@@ -255,7 +269,7 @@ test-show-dir:
 #.______________________________________________________________________________
 #| * test-stats - authorized --stats
 test-stats:
-	@$(call Test,Stats)
+	@$(call Test,$@)
 	@$(call Prompt)
 	${AUTH_ENV} "${AUTH}" --request-password --stats >"${ART_DIR}/stats.txt"
 	@$(call Prompt)
@@ -265,7 +279,7 @@ test-stats:
 #.______________________________________________________________________________
 #| * test-root-dir - root-relative identity works across copied roots
 test-root-dir:
-	@$(call Test,Root-relative portable identity)
+	@$(call Test,$@)
 	@$(call Prompt)
 	${ROOT_AUTH_ENV} "${AUTH}" --request-password --write "${ROOT_DIR}/rel-file1"
 	@$(call Prompt)
@@ -277,7 +291,7 @@ test-root-dir:
 #.______________________________________________________________________________
 #| * test-color - color modes and NO_COLOR/NOCOLOR
 test-color:
-	@$(call Test,Color options)
+	@$(call Test,$@)
 	@$(call Prompt)
 	${AUTH_ENV} "${AUTH}" --color always --check "${TEST_DIR}/file1" 2>"${ART_DIR}/color-always.err" || true
 	@$(call Prompt)
@@ -289,41 +303,60 @@ test-color:
 #.______________________________________________________________________________
 #| * test-auth-options - AUTH_OPTIONS supplies directory and root options
 test-auth-options:
-	@$(call Test,AUTH_OPTIONS)
+	@$(call Test,$@)
 	@$(call Prompt)
 	AUTH_OPTIONS="-d ${AUTH_DIR} --root-dir=${ROOT_DIR}" \
 	AUTH_TEST_CURRENT_PASSWORD_OR_BURNER="${TEST_PASS}" \
 	  "${AUTH}" --request-password --check "${ROOT_DIR}/rel-file1"
 	@$(call Passed)
 
+
 #.______________________________________________________________________________
-#| * test-summary - summarize manual test artifacts
-test-summary:
-	@$(call Test,Manual test artifacts)
+#| * test-setup-profile-safety - changed setup.profile blocks source-style workflow
+test-setup-profile-safety:
+	@$(call Tests,Changed setup.profile is rejected)
+	@$(call Prompt)
+	printf "export AUTH_PROFILE_OK=1\n" >"${TEST_DIR}/setup.profile"
+	@$(call Prompt)
+	${AUTH_ENV} "${AUTH}" --request-password --write "${TEST_DIR}/setup.profile"
+	@$(call Prompt)
+	printf "export AUTH_PROFILE_OK=0\n" >"${TEST_DIR}/setup.profile"
+	@$(call Prompt)
+	if ${AUTH_ENV} "${AUTH}" --check "${TEST_DIR}/setup.profile"; then \
+	  $(call FailedExpectation,Expected modified setup.profile to fail); \
+	else \
+	  $(call PassedExpectation,modified setup.profile rejected); \
+	fi
+
+#.______________________________________________________________________________
+#| * tests-summary - summarize manual test artifacts
+tests-summary:
+	@$(call Tests,Manual test artifacts)
 	@$(call Prompt)
 	find "${ART_DIR}" -maxdepth 1 -type f -print | sort
 	@printf "${BLU}${RULER}\nTest${CYN} summary${OFF}\n"; \
-         printf "${RED}%d failures${OFF}\n"  $$(grep -c '^Failed'  "${RESULTS}"); \
-         printf "${GRN}%d passed${OFF}\n"    $$(grep -c '^Passed'  "${RESULTS}"); \
-         printf "${CYN}%d tests ran${OFF}\n" $$(grep -c '^Running' "${RESULTS}");
+         printf "${RED}%d failures${OFF}\n"  $$(${GREP_EXE} -c '^Failed'  "${RESULTS}"); \
+         printf "${GRN}%d passed${OFF}\n"    $$(${GREP_EXE} -c '^Passed'  "${RESULTS}"); \
+         printf "${CYN}%d tests ran${OFF}\n" $$(${GREP_EXE} -c '^Running' "${RESULTS}");
+	${GREP_EXE} ^Failed "${RESULTS}"
 
 #.______________________________________________________________________________
 #| * test-root-directives - root directive hardening smoke tests
 test-root-directives:
-	@$(call Test,Root directive hardening)
+	@$(call Test,$@)
 	@$(call Prompt)
 	${AUTH_ENV} "${AUTH}" --default-root --check "${TEST_DIR}/file1" || true
 	@$(call Prompt)
 	if ${AUTH_ENV} "${AUTH}" --default-root --root-dir=${ROOT_DIR} --check "${TEST_DIR}/file1"; then \
-	  $(call ExpectPassed,Expected duplicate root directives to fail); \
+	  $(call FailedExpectation,Expected duplicate root directives to fail); \
 	else \
-	  $(call ExpectFailed,duplicate root directives rejected); \
+	  $(call PassedExpectation,duplicate root directives rejected); \
 	fi
 	@$(call Prompt)
 	if AUTH_OPTIONS="-d ${AUTH_DIR} --default-root" "${AUTH}" --root-dir=${ROOT_DIR} --check "${TEST_DIR}/file1"; then \
-	  $(call ExpectPassed,Expected AUTH_OPTIONS plus CLI root directive to fail); \
+	  $(call FailedExpectation,Expected AUTH_OPTIONS plus CLI root directive to fail); \
 	else \
-	  $(call ExpectFailed,AUTH_OPTIONS plus CLI root directive rejected); \
+	  $(call PassedExpectation,AUTH_OPTIONS plus CLI root directive rejected); \
 	fi
 
 # This line remains to indicate the last line of this file

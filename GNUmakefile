@@ -8,6 +8,17 @@
 #<
 #< Conveniences to run some simple stuff.
 #<
+#< There are two input variables that may be used to affect this:
+#<
+#< Name  | Description
+#< ----  | -----------
+#< TESTS | contains a list of makefiles containing test targets. Defaults to test.mk
+#< VERS  | specifies a version and comments for use in tagging the git repository. This is required.
+#<
+#< Note - Individual test targets must be named test-NAME.
+#<        Targets beginning with tests-NAME (plural) set up and summarize.
+#<        This naming convention allows automatic collection for the TEST_LIST.
+
 #| Make targets
 #| ============
 #|
@@ -17,9 +28,11 @@
 # Dependencies
 SHELL = /bin/bash
 GIT_EXE  = $(shell command -v git)
-THIS_MAKEFILE := $(realpath $(lastword $(MAKEFILE_LIST)))
+GREP_EXE  = $(firstword $(shell command -v ggrep) $(shell command -v grep))
+TOP_MAKEFILE := $(realpath $(lastword $(MAKEFILE_LIST)))
 TESTS ?= tests.mk # can be overridden
-PHONIES := $(sort $(shell perl -lane 'print $$1 if m{^([a-zA-Z][-a-zA-Z0-9_]*):[^=]*$$};' ${THIS_MAKEFILE} ${TESTS}))
+TEST_LIST := $(filter test-%,$(shell perl -lane 'print $$1 if m{^([a-zA-Z][-a-zA-Z0-9_]*):[^=]*$$};' ${TESTS}))
+PHONIES := $(sort $(shell perl -lane 'print $$1 if m{^([a-zA-Z][-a-zA-Z0-9_]*):[^=]*$$};' ${TOP_MAKEFILE} ${TESTS}))
 
 .PHONY: $(PHONIES)
 
@@ -70,7 +83,7 @@ else
 endif
 RULER   := ------------------------------------------------------------
 Prompt   = printf "${CYN}%% ${OFF}"
-Info     = printf "${BLU}${RULER}\nInfo:${CYN} $1${OFF}\n"; printf "$@\n"
+Info     = printf "${BLU}${RULER}\nInfo:${CYN} $1${OFF}\n";
 Error    = printf "${RED}Error:${OFF} $1\n"
 Warning  = printf "${YLW}Warning:${OFF} $1\n"
 Finished = printf "${CYN}Finished:${OFF} $1\n"
@@ -86,7 +99,7 @@ endef
 #      #> represents the end of documentation
 #      A special call to the Test macro also goes to targets if in the TESTS makefile if it exists.
 help: # default target
-	@python3 ${DEV_TOOLS}/make-help.py ${THIS_MAKEFILE} ${TESTS}
+	@python3 ${DEV_TOOLS}/make-help.py ${TOP_MAKEFILE} ${TESTS}
 
 #.______________________________________________________________________________
 #| * vars - display make vars of interest
@@ -95,12 +108,16 @@ VARS :=$(sort \
   ARCHIVES \
   ARTIFACTS \
   AUTH_DEV \
+  AUTH_ENV \
   AUTH_RELEASE \
   DEV_TOOLS \
   GIT_WORK_DIR \
   PHONIES \
+  RESULTS \
+  ROOT_AUTH_ENV \
+  TEST_LIST \
   TESTS \
-  THIS_MAKEFILE \
+  TOP_MAKEFILE \
   VERS \
 )
 
@@ -116,8 +133,9 @@ version:
 #.______________________________________________________________________________
 #| * archive - create an archive to share
 archive:
-	git archive --format=zip HEAD > ${ARCHIVE_NOW}
-	@$(call Info, Created ${ARCHIVE_NOW})
+	${GIT_EXE} archive --format=zip HEAD > ${ARCHIVE_NOW}
+	@$(call Info,Created ${ARCHIVE_NOW})
+
 #.______________________________________________________________________________
 #| * unpack VERS=#.#.# - extract version from archives
 unpack:
@@ -162,18 +180,18 @@ verify: fmt check clippy test
 	@$(call Finished,Verification complete)
 
 #.______________________________________________________________________________
-#| * upload VERS='#.#.# Reason' - commit to GitHub (aka push)
+#| * upload VERS='#.#.# Note' - commit to GitHub (aka push)
 upload: verify
 	python3 ${DEV_TOOLS}/check-version.py ${VERS}
 	set -- ${VERS}; \
         if [[ $$# == 1 ]]; then \
-          git commit -a; \
-          git tag -a -s "v$$1"; \
+          ${GIT_EXE} commit -a; \
+          ${GIT_EXE} tag -a -s "v$$1"; \
         else \
-          git commit -a -m "$$1"; \
-          git tag -a -s -m "$$1" "v$(firstword $$1)"; \
+          ${GIT_EXE} commit -a -m "$$1"; \
+          ${GIT_EXE} tag -a -s -m "$$1" "v$(firstword $$1)"; \
         fi
-	git push
+	${GIT_EXE} push
 
 push: upload
 

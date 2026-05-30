@@ -7,7 +7,7 @@ import re
 from pathlib import Path
 
 
-TARGET_WIDTH = 24
+TARGET_WIDTH = 30
 TARGET_PATTERN = re.compile(r"^\s*\*\s+([-_A-Za-z0-9]+)\s+-\s+(.*)$")
 TABLE_ROW_PATTERN = re.compile(r"^\s*\|\s*(.*?)\s*\|\s*(.*)$")
 RULE_PATTERN = re.compile(r"^([-_A-Za-z0-9]+):")
