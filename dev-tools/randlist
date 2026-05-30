@@ -26,10 +26,14 @@ Synopsis
 --------
 
 ```bash
-randlist [--seed=NUM] WORD1 WORD2 ... $
+randlist --help|-h
+randlist --version
+randlist [--seed=NUM] "WORD1" "WORD2" ... $
+randlist [--seed=NUM] TEXT_FILE
 ```
 
 Seed default: 1. Seed of 0 uses /dev/urandom. Negative seed does no sorting.
+Text file will use each lines as a "WORD".
 
 '
       exit
@@ -67,6 +71,18 @@ Seed default: 1. Seed of 0 uses /dev/urandom. Negative seed does no sorting.
     echo "    or randlist --help" >&2
     echo -n "[0m"
     exit 1
+  elif [[ ${#WORDS[@]} -eq 1 ]]; then
+    if [[ -r "${WORDS[0]}" ]]; then
+      local -a LINES=()
+      local line
+      while IFS= read -r line || [[ -n "${line}" ]]; do
+          LINES+=("${line}")
+      done < "filename.txt"   
+      WORDS=("${LINES}")
+    else
+      echo "${WORDS[0]}"
+      exit
+    fi
   fi
 
   # Initialize RANDOM with seed
