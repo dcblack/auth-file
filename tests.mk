@@ -318,9 +318,20 @@ test-color:
 test-auth-options:
 	@$(call Test,$@)
 	@$(call Prompt)
-	AUTH_OPTIONS="-d ${AUTH_DIR} --root-dir=${ROOT_DIR}" \
-	AUTH_TEST_CURRENT_PASSWORD_OR_BURNER="${TEST_PASS}" \
-	  "${AUTH}" --request-password --check "${ROOT_DIR}/rel-file1"
+	rm -fr "${TEST_DIR}/auth-options"
+	@$(call Prompt)
+	mkdir -p "${TEST_DIR}/auth-options/auth-test" "${TEST_DIR}/auth-options/root"
+	@$(call Prompt)
+	printf "auth options rooted content\n" >"${TEST_DIR}/auth-options/root/rel-file1"
+	@$(call Prompt)
+	env AUTH_OPTIONS="-d ${TEST_DIR}/auth-options/auth-test --root-dir=${TEST_DIR}/auth-options/root" \
+	    AUTH_TEST_FALLBACK_PASSWORD="${TEST_PASS}" \
+	    AUTH_TEST_FALLBACK_PASSWORD_CONFIRM="${TEST_PASS}" \
+	    AUTH_TEST_CURRENT_PASSWORD_OR_BURNER="${TEST_PASS}" \
+	    "${AUTH}" --request-password --write "${TEST_DIR}/auth-options/root/rel-file1"
+	@$(call Prompt)
+	env AUTH_OPTIONS="-d ${TEST_DIR}/auth-options/auth-test --root-dir=${TEST_DIR}/auth-options/root" \
+	    "${AUTH}" --check "${TEST_DIR}/auth-options/root/rel-file1"
 	@$(call Passed)
 
 
