@@ -86,7 +86,7 @@ ROOT_AUTH_ENV = AUTH_OPTIONS="-d ${AUTH_DIR} --root-dir=${ROOT_DIR}" \
                 AUTH_TEST_FALLBACK_PASSWORD_CONFIRM="${TEST_PASS}" \
                 AUTH_TEST_CURRENT_PASSWORD_OR_BURNER="${TEST_PASS}"
 Test=printf "${BLU}${RULER}\nTest:${CYN} $1${OFF}\n"; printf "Running $@\n"               >>"${RESULTS}"
-Tests=printf "${BLU}${RULER}\nTest setup:${CYN} $1${OFF}\n"; printf "Running $@\n"               >>"${RESULTS}"
+Tests=printf "${BLU}${RULER}\nGeneral:${CYN} $1${OFF}\n"; printf "Running $@\n"               >>"${RESULTS}"
 Passed=printf "${GRN}Test passed:${CYN} $@${OFF}\n"; printf "Passed $@\n"                 >>"${RESULTS}"
 FailedExpectation=printf "${RED}Error:${OFF} $@\n" >&2; printf "Failed $@ - $1\n"              >>"${RESULTS}"
 PassedExpectation=printf "${GRN}Success: expected $@ to fail - ${OFF} $1\n"; printf "Passed $@\n" >>"${RESULTS}"
@@ -248,12 +248,25 @@ test-request-password:
 test-bad-password:
 	@$(call Test,$@)
 	@$(call Prompt)
-	if env AUTH_OPTIONS="-d ${AUTH_DIR}" \
+	rm -fr "${TEST_DIR}/bad-password"
+	@$(call Prompt)
+	mkdir -p "${TEST_DIR}/bad-password/auth-test"
+	@$(call Prompt)
+	printf "bad password test\n" >"${TEST_DIR}/bad-password/file1"
+	@$(call Prompt)
+	env AUTH_OPTIONS="-d ${TEST_DIR}/bad-password/auth-test" \
+	    AUTH_TEST_FALLBACK_PASSWORD="${TEST_PASS}" \
+	    AUTH_TEST_FALLBACK_PASSWORD_CONFIRM="${TEST_PASS}" \
+	    AUTH_TEST_CURRENT_PASSWORD_OR_BURNER="${TEST_PASS}" \
+	    "${AUTH}" --request-password --cache-time=0 --write "${TEST_DIR}/bad-password/file1"
+	@$(call Prompt)
+	if env AUTH_OPTIONS="-d ${TEST_DIR}/bad-password/auth-test" \
 	    AUTH_TEST_CURRENT_PASSWORD_OR_BURNER="${BAD_PASS}" \
-	    "${AUTH}" --request-password --cache-time=0 --write "${TEST_DIR}/file1" ; then \
+	    "${AUTH}" --request-password --cache-time=0 --write "${TEST_DIR}/bad-password/file1"; then \
 	  $(call FailedExpectation,Bad auth password returned OK!); \
+	  exit 1; \
 	else \
-	  $(call PassedExpectation, Bad auth password rejected); \
+	  $(call PassedExpectation,Bad auth password rejected); \
 	fi
 
 #.______________________________________________________________________________
@@ -314,7 +327,7 @@ test-auth-options:
 #.______________________________________________________________________________
 #| * test-setup-profile-safety - changed setup.profile blocks source-style workflow
 test-setup-profile-safety:
-	@$(call Tests,Changed setup.profile is rejected)
+	@$(call Test,Changed setup.profile is rejected)
 	@$(call Prompt)
 	printf "export AUTH_PROFILE_OK=1\n" >"${TEST_DIR}/setup.profile"
 	@$(call Prompt)
@@ -327,18 +340,6 @@ test-setup-profile-safety:
 	else \
 	  $(call PassedExpectation,modified setup.profile rejected); \
 	fi
-
-#.______________________________________________________________________________
-#| * tests-summary - summarize manual test artifacts
-tests-summary:
-	@$(call Tests,Manual test artifacts)
-	@$(call Prompt)
-	find "${ART_DIR}" -maxdepth 1 -type f -print | sort
-	@printf "${BLU}${RULER}\nTest${CYN} summary${OFF}\n"; \
-         printf "${RED}%d failures${OFF}\n"  $$(${GREP_EXE} -c '^Failed'  "${RESULTS}"); \
-         printf "${GRN}%d passed${OFF}\n"    $$(${GREP_EXE} -c '^Passed'  "${RESULTS}"); \
-         printf "${CYN}%d tests ran${OFF}\n" $$(${GREP_EXE} -c '^Running' "${RESULTS}");
-	${GREP_EXE} ^Failed "${RESULTS}"
 
 #.______________________________________________________________________________
 #| * test-root-directives - root directive hardening smoke tests
@@ -358,5 +359,17 @@ test-root-directives:
 	else \
 	  $(call PassedExpectation,AUTH_OPTIONS plus CLI root directive rejected); \
 	fi
+
+#.______________________________________________________________________________
+#| * tests-summary - summarize manual test artifacts
+tests-summary:
+	@$(call Tests,Manual test artifacts)
+	@$(call Prompt)
+	find "${ART_DIR}" -maxdepth 1 -type f -print | sort
+	@printf "${BLU}${RULER}\nTest${CYN} summary${OFF}\n"; \
+         printf "${RED}%d failures${OFF}\n"  $$(${GREP_EXE} -c '^Failed'  "${RESULTS}"); \
+         printf "${GRN}%d passed${OFF}\n"    $$(${GREP_EXE} -c '^Passed'  "${RESULTS}"); \
+         printf "${CYN}%d tests ran${OFF}\n" $$(${GREP_EXE} -c '^Running' "${RESULTS}");
+	${GREP_EXE} ^Failed "${RESULTS}"
 
 # This line remains to indicate the last line of this file

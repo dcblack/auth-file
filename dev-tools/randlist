@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+#
+#$Info: randlist - Pseudo-randomize a list of words using a seed. $
+#$Syntax: randlist [--seed=NUM] WORD1 WORD2 ... $
+# Seed default: 1. Negative seed does no sorting. Seed of 0 uses /dev/urandom.
+
+function Randlist() {
+  local VERSION=1.0
+
+  set -euo pipefail
+
+  SEED=1
+  WORDS=()
+
+  # Parse arguments
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+    --help | -h)
+      echo '
+Name
+----
+
+randlist - Pseudo-randomize a list of words using a seed.
+
+Synopsis
+--------
+
+```bash
+randlist [--seed=NUM] WORD1 WORD2 ... $
+```
+
+Seed default: 1. Seed of 0 uses /dev/urandom. Negative seed does no sorting.
+
+'
+      exit
+      ;;
+    --version)
+      echo "$0 ${VERSION}"
+      exit
+      ;;
+    --seed=*)
+      SEED="${1#--seed=}"
+      shift
+      ;;
+    -s)
+      if [[ $# -lt 2 ]]; then
+        echo "Error: -s requires a value" >&2
+        exit 1
+      fi
+      SEED="$2"
+      shift 2
+      ;;
+    -*)
+      echo "Error: Unknown option $1" >&2
+      exit 1
+      ;;
+    *)
+      WORDS+=("$1")
+      shift
+      ;;
+    esac
+  done
+
+  if [[ ${#WORDS[@]} -eq 0 ]]; then
+    echo -n "[1;91m"
+    echo "Usage: randlist [--seed=NUM] WORD1 WORD2 ..." >&2
+    echo "    or randlist --help" >&2
+    echo -n "[0m"
+    exit 1
+  fi
+
+  # Initialize RANDOM with seed
+  if [[ "${SEED}" -lt 0 ]]; then
+    for word in "${WORDS[@]}"; do
+      echo "${word}"
+    done
+    exit 0
+  elif [[ "${SEED}" -eq 0 ]]; then
+    # Use TRNG (True Random Number Generator) via /dev/urandom
+    # Read 4 bytes (32 bits) and convert to decimal
+    RAND_HEX=$(od -An -t u4 -N 4 </dev/urandom | tr -d ' ')
+    RANDOM="${RAND_HEX}"
+  else
+    RANDOM="${SEED}"
+  fi
+
+  # Fisher-Yates shuffle
+  n=${#WORDS[@]}
+  for ((i = n - 1; i > 0; i--)); do
+    # Generate random index between 0 and i
+    j=$((RANDOM % (i + 1)))
+    # Swap elements
+    temp="${WORDS[i]}"
+    WORDS[i]="${WORDS[j]}"
+    WORDS[j]="${temp}"
+  done
+
+  # Output shuffled words
+  printf '%s\n' "${WORDS[@]}"
+}
+
+Randlist "$@"

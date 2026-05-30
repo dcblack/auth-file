@@ -14,6 +14,7 @@
 #< ----  | -----------
 #< TESTS | contains a list of makefiles containing test targets. Defaults to test.mk
 #< VERS  | specifies a version and comments for use in tagging the git repository. This is required.
+#< SEED  | controls randomization of test list
 #<
 #< Note - Individual test targets must be named test-NAME.
 #<        Targets beginning with tests-NAME (plural) set up and summarize.
@@ -31,7 +32,8 @@ GIT_EXE  = $(shell command -v git)
 GREP_EXE  = $(firstword $(shell command -v ggrep) $(shell command -v grep))
 TOP_MAKEFILE := $(realpath $(lastword $(MAKEFILE_LIST)))
 TESTS ?= tests.mk # can be overridden
-TEST_LIST := $(filter test-%,$(shell perl -lane 'print $$1 if m{^([a-zA-Z][-a-zA-Z0-9_]*):[^=]*$$};' ${TESTS}))
+SEED  ?= 0
+TEST_LIST := $(shell randlist -s ${SEED} $(filter test-%,$(shell perl -lane 'print $$1 if m{^([a-zA-Z][-a-zA-Z0-9_]*):[^=]*$$};' ${TESTS})))
 PHONIES := $(sort $(shell perl -lane 'print $$1 if m{^([a-zA-Z][-a-zA-Z0-9_]*):[^=]*$$};' ${TOP_MAKEFILE} ${TESTS}))
 
 .PHONY: $(PHONIES)
