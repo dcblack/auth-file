@@ -3,14 +3,12 @@
 #$Info: shuffle - Randomly shuffle a list of words using a seed. $
 # See HELP_TEXT for more information
 
-function Report_error()
-{
+function Report_error() {
   printf "[1;96mError:[0m %s\n" "$*" 1>&2
   return 1
 }
 
-function Record-seed()
-{
+function Record-seed() {
   local SEED="$1" TYPE="$2" SAVE_FILE="$3"
   printf "[1;96mInfo:[0m Seed %s %s\n" "${SEED}" "${TYPE}" >/dev/tty
   if [[ -n "${SAVE_FILE}" ]]; then
@@ -87,11 +85,11 @@ If --stdin is intermixed with the WORDs, it will interpolate at that point.
       ;;
 
     --save=*)
-      SAVE_FILE="${ARG/*=}"
+      SAVE_FILE="${ARG/*=/}"
       ;;
 
     --seed=*)
-      ARG="${ARG/*=}"
+      ARG="${ARG/*=/}"
       if [[ "${ARG}" =~ ^-?[0-9]+$ ]]; then
         SEED="${ARG}"
       elif [[ -r "${ARG}" && -f "${ARG}" ]]; then
@@ -101,7 +99,7 @@ If --stdin is intermixed with the WORDs, it will interpolate at that point.
             SEED="${line}"
             break
           fi
-        done < "${filename}"   
+        done <"${filename}"
       else
         Report_error "Undecipherable seed -- see $0 --help"
         return 1
@@ -125,7 +123,7 @@ If --stdin is intermixed with the WORDs, it will interpolate at that point.
             SEED="${line}"
             break
           fi
-        done < "${filename}"   
+        done <"${filename}"
       else
         Report_error "Undecipherable seed -- see $0 --help"
         return 1
@@ -133,15 +131,15 @@ If --stdin is intermixed with the WORDs, it will interpolate at that point.
       TYPE="User specified seed ${SEED}"
       ;;
 
-     --stdin)
+    --stdin)
       if [[ ! -t 0 ]] && read -t 0; then
         # Consume all stdin safely
         while IFS= read -r line; do
           WORDS+=("${line}")
         done
       else
-          Report_error "-stdin specified but no data piped."
-          return 1
+        Report_error "-stdin specified but no data piped."
+        return 1
       fi
       ;;
 
@@ -164,12 +162,12 @@ If --stdin is intermixed with the WORDs, it will interpolate at that point.
     echo -n "[0m"
     return 1
   elif [[ ${#WORDS[@]} -eq 1 ]]; then
-    if [[ -r "${WORDS[0]}"  && -f "${WORDS[0]}" ]]; then
+    if [[ -r "${WORDS[0]}" && -f "${WORDS[0]}" ]]; then
       local filename="${WORDS[0]}"
       local -a LINES=()
       while IFS= read -r line || [[ -n "${line}" ]]; do
-          LINES+=("${line}")
-      done < "${filename}"   
+        LINES+=("${line}")
+      done <"${filename}"
       WORDS=("${LINES[@]}")
     elif [[ -e "${WORDS[0]}" ]]; then
       Report_error "Unreadable file '${WORDS[0]}'"
