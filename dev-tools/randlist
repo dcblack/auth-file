@@ -1,27 +1,37 @@
 #!/usr/bin/env bash
 #
-#$Info: randlist - Pseudo-randomize a list of words using a seed. $
-#$Syntax: randlist [--seed=NUM] WORD1 WORD2 ... $
-# Seed default: 1. Negative seed does no sorting. Seed of 0 uses /dev/urandom.
+#$Info: shuffle - Randomly shuffle a list of words using a seed. $
+# See HELP_TEXT for more information
 
-function Randlist() {
-  local VERSION=1.0
+function Report_error()
+{
+  printf "[1;96mError:[0m %s\n" "$*" 1>&2
+  return 1
+}
 
-  set -euo pipefail
+function Record-seed()
+{
+  local SEED="$1" TYPE="$2" SAVE_FILE="$3"
+  printf "[1;96mInfo:[0m Seed %s %s\n" "${SEED}" "${TYPE}" >/dev/tty
+  if [[ -n "${SAVE_FILE}" ]]; then
+    if ! echo -n '# ' >"${SAVE_FILE}"; then
+      Report_error "Unable to write seed file '%s'"
+    fi
+    {
+      date
+      printf "# %s\n" "${TYPE}"
+      printf "%s\n" "${SEED}"
+    } >>"${SAVE_FILE}"
+    printf "[1;96mInfo:[0m Seed saved in '%s'\n" "${SAVE_FILE}" >/dev/tty
+  fi
+}
 
-  local SEED=1 TYPE="default"
-  local -a WORDS=()
-  local LOG=""
-
-  # Parse arguments
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-    --help | -h)
-      echo '
+function Shuffle() {
+  local VERSION=1.0 HELP_TEXT='
 Name
 ----
 
-randlist - Pseudo-randomize a list of words using a seed.
+shuffle - Randomly shuffle a list of words using a seed.
 
 Synopsis
 --------
@@ -29,46 +39,121 @@ Synopsis
 ```bash
 randlist --help|-h
 randlist --version
-randlist [--seed=NUM] [--seed-file=FILE] "WORD1" "WORD2" ... $
-randlist [--seed=NUM] [--seed-file=FILE] TEXT_FILE
+randlist [OPTIONS] "WORD1" "WORD2" ... $
+randlist [OPTIONS] TEXT_FILE
 ```
+Options
+-------
+
+Option      | Description
+------      | -----------
+--help      | displays this text and exits (aka -h)
+--version   | displays the version and exits
+--seed=NUM  | specifies the starting seed (aka -s NUM)
+--seed=FILE | specifies the starting seed (aka -s NUM)
+--save=FILE | specifies a file to dump the seed information into
+--stdin     | allows piping the words one line at a time from stdin
+
+Notes
+-----
 
 Seed default: 1. Seed of 0 uses /dev/urandom. Negative seed does no sorting.
+
 Text file will use each lines as a "WORD".
 
+If --stdin is intermixed with the WORDs, it will interpolate at that point.
+
 '
+
+  set -euo pipefail
+
+  local SEED=1 TYPE="Default seed"
+  local -a WORDS=()
+  local ARG="" SAVE_FILE="" line
+
+  # Parse arguments
+  while [[ $# -gt 0 ]]; do
+    ARG="$1"
+    shift
+    case "${ARG}" in
+    --help | -h)
+      echo "${HELP_TEXT}"
       return 0
       ;;
+
     --version)
       echo "$0 ${VERSION}"
       return 0
       ;;
-    --seed=*)
-      TYPE="specified"
-      SEED="${1#--seed=}"
-      shift
+
+    --save=*)
+      SAVE_FILE="${ARG/*=}"
       ;;
-    -s)
-      if [[ $# -lt 2 ]]; then
-        echo "Error: -s requires a value" >&2
+
+    --seed=*)
+      ARG="${ARG/*=}"
+      if [[ "${ARG}" =~ ^-?[0-9]+$ ]]; then
+        SEED="${ARG}"
+      elif [[ -r "${ARG}" && -f "${ARG}" ]]; then
+        local filename="${ARG}"
+        while IFS= read -r line || [[ -n "${line}" ]]; do
+          if [[ "${line}" =~ ^[0-9]+$ ]]; then
+            SEED="${line}"
+            break
+          fi
+        done < "${filename}"   
+      else
+        Report_error "Undecipherable seed -- see $0 --help"
         return 1
       fi
-      TYPE="specified"
-      SEED="$2"
-      shift 2
+      TYPE="User specified seed ${SEED}"
       ;;
-    --seed-file=*)
-      LOG="$2"
+
+    -s)
+      if [[ $# -lt 1 ]]; then
+        Report_error " -s requires a value"
+        return 1
+      fi
+      ARG="$1"
       shift
+      if [[ "${ARG}" =~ ^-?[0-9]+$ ]]; then
+        SEED="${ARG}"
+      elif [[ -r "${ARG}" ]]; then
+        local filename="${ARG}"
+        while IFS= read -r line || [[ -n "${line}" ]]; do
+          if [[ "${line}" =~ ^[0-9]+$ ]]; then
+            SEED="${line}"
+            break
+          fi
+        done < "${filename}"   
+      else
+        Report_error "Undecipherable seed -- see $0 --help"
+        return 1
+      fi
+      TYPE="User specified seed ${SEED}"
       ;;
+
+     --stdin)
+      if [[ ! -t 0 ]] && read -t 0; then
+        # Consume all stdin safely
+        while IFS= read -r line; do
+          WORDS+=("${line}")
+        done
+      else
+          Report_error "-stdin specified but no data piped."
+          return 1
+      fi
+      ;;
+
     -*)
-      echo "Error: Unknown option $1" >&2
+      Report_error "Unknown option '${ARG}'"
       return 1
       ;;
+
     *)
-      WORDS+=("$1")
-      shift
+      WORDS+=("${ARG}")
       ;;
+
     esac
   done
 
@@ -80,32 +165,34 @@ Text file will use each lines as a "WORD".
     return 1
   elif [[ ${#WORDS[@]} -eq 1 ]]; then
     if [[ -r "${WORDS[0]}"  && -f "${WORDS[0]}" ]]; then
+      local filename="${WORDS[0]}"
       local -a LINES=()
-      local line
       while IFS= read -r line || [[ -n "${line}" ]]; do
           LINES+=("${line}")
-      done < "filename.txt"   
+      done < "${filename}"   
       WORDS=("${LINES[@]}")
     elif [[ -e "${WORDS[0]}" ]]; then
-      echo -n "[1;91mError: unreadable file ${WORDS[0]}[0m"
+      Report_error "Unreadable file '${WORDS[0]}'"
       return 1
     else
       echo "${WORDS[0]}"
       echo "[1;96mInfo:[0m one element" >/dev/tty
+      Record-seed "${SEED}" "${TYPE}" "${SAVE_FILE}"
       return 0
     fi
   fi
 
   # Initialize RANDOM with seed
-  if [[ "${SEED}" -lt 0 ]]; then
-    TYPE="unchanged"
+  if [[ ${SEED} -lt 0 ]]; then
+    TYPE="${TYPE} as unchanged"
     printf '%s\n' "${WORDS[@]}"
     echo "[1;96mInfo:[0m original order" >/dev/tty
+    Record-seed "${SEED}" "${TYPE}" "${SAVE_FILE}"
     return 0
-  elif [[ "${SEED}" -eq 0 ]]; then
+  elif [[ ${SEED} -eq 0 ]]; then
     # Use TRNG (True Random Number Generator) via /dev/urandom
     # Read 4 bytes (32 bits) and convert to decimal
-    TYPE="TRNG"
+    TYPE="${TYPE} is true random"
     SEED=$(od -An -t u4 -N 4 </dev/urandom | tr -d ' ')
     RANDOM="${SEED}"
   else
@@ -125,14 +212,7 @@ Text file will use each lines as a "WORD".
 
   # Output shuffled words
   printf '%s\n' "${WORDS[@]}"
-  printf "[1;96mInfo:[0m Seed %s\n" "${SEED}" >/dev/tty
-  if [[ -n "${LOG}" ]]; then
-    if ! echo "${SEED}" >"${LOG}"; then
-      printf "[1;96mError: Unable to write seed file[0m '%s'\n" "${LOG}"
-      return 1
-    fi
-    printf "[1;96mInfo:[0m Seed saved in '%s'\n" "${LOG}" >/dev/tty
-  fi
+  Record-seed "${SEED}" "${TYPE}" "${SAVE_FILE}"
 }
 
-Randlist "$@"
+Shuffle "$@"
