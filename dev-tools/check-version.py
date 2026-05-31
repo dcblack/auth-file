@@ -36,12 +36,13 @@ Description
 -----------
 
 Examines the supplied version number and expands if necessary to the standard tuple of MAJOR-MINOR-PATCH.
+Allows for optional +IDENTIFIER to be appended to the version (e.g., 1.2.3+a).
 Obtains the largest git tag matching v#.#.#, which is considered the current version.
 Compares the supplied version to the current version and returns an error if there is not a strict advance in the version number.
 If comparison passed, display the full formatted version with two possibilites. Either use hyphens (default) or dots.
 """.strip("\n")
 
-VERSION_RE = re.compile(r"^\d+(?:[-.]\d+){0,2}$")
+VERSION_RE = re.compile(r"^\d+(?:[-.]\d+){0,2}(?:\+[a-zA-Z0-9]+)?$")
 TAG_RE = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
 NAME_RE = re.compile(r'^name\s*=\s*"([^"]+)"')
 PACKAGE_VERSION_RE = re.compile(r'^version\s*=\s*"([^"]+)"')
@@ -217,6 +218,10 @@ def main() -> int:
             message_args.insert(0, incoming_raw)
         incoming_raw = source_version
 
+    identifier = ""
+    if "+" in incoming_raw:
+        incoming_raw, identifier = incoming_raw.split("+", 1)
+
     try:
         expanded_version = expand_incoming_version(incoming_raw, current_version)
     except ValueError as error:
@@ -229,7 +234,8 @@ def main() -> int:
         print(f"Binary tool name    {tool_name}")
         print(f"Current tag version {current_version_dots}")
         print(f"Source code version {source_version}")
-        print(f"Specified   version {expanded_version_dots}")
+        specified_display = expanded_version_dots + (f"+{identifier}" if identifier else "")
+        print(f"Specified   version {specified_display}")
         if args.show:
             return 0
 
@@ -242,6 +248,8 @@ def main() -> int:
         return 1
 
     final_version = expanded_version_dots if args.use_dots else version_tuple_to_dashes(expanded_version)
+    if identifier:
+        final_version += f"+{identifier}"
     if not args.silent:
         if message_args and not args.no_message:
             print(final_version, *message_args)

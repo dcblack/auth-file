@@ -984,24 +984,35 @@ fn tampered_authorization_cache_is_ignored() {
 }
 
 #[test]
-fn secret_provider_parses() {
+fn secret_provider_aliases_parse() {
     let tmp = tempdir().unwrap();
     let db = tmp.path().join("auth-test");
     let file = tmp.path().join("untrusted.txt");
     fs::write(&file, "not authorized yet\n").unwrap();
 
-    let mut cmd = auth_cmd();
-    cmd.timeout(Duration::from_secs(10))
-        .args([
-            "--secret-provider=prompt",
-            "--dir",
-            path_str(&db),
-            "--check",
-            path_str(&file),
-        ])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("unknown secret provider").not());
+    for provider in [
+        "prompt",
+        "1password",
+        "1p",
+        "1pw",
+        "bitwarden",
+        "bw",
+        "env",
+        "environment",
+        "keyring",
+        "keys",
+    ] {
+        let mut cmd = auth_cmd();
+        cmd.timeout(Duration::from_secs(10))
+            .arg(format!("--secret-provider={provider}"))
+            .arg("--dir")
+            .arg(path_str(&db))
+            .arg("--check")
+            .arg(path_str(&file))
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("unknown secret provider").not());
+    }
 }
 
 #[test]

@@ -254,10 +254,11 @@ fn note_secret_provider(state: &mut CliState) -> Result<(), String> {
 
 fn parse_secret_provider(value: &str) -> Result<SecretProvider, String> {
     match value.trim().to_ascii_lowercase().as_str() {
+        "prompt" => Ok(SecretProvider::Prompt),
         "1password" | "1p" | "1pw" => Ok(SecretProvider::OnePassword),
         "bitwarden" | "bw" => Ok(SecretProvider::Bitwarden),
-        "env" | "environment" => Ok(SecretProvider::Environment),
-        "keyring" | "keys" => Ok(SecretProvider::Keyring),
+        "env" | "environment" => Ok(SecretProvider::Env),
+        "keyring" | "keys" | "oskeyring" | "os-keyring" => Ok(SecretProvider::OsKeyring),
         other => Err(format!("unknown secret provider: {other}")),
     }
 }

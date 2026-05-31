@@ -381,6 +381,8 @@ tests-summary:
          printf "${RED}%d failures${OFF}\n"  $$(${GREP_EXE} -c '^Failed'  "${RESULTS}"); \
          printf "${GRN}%d passed${OFF}\n"    $$(${GREP_EXE} -c '^Passed'  "${RESULTS}"); \
          printf "${CYN}%d tests ran${OFF}\n" $$(${GREP_EXE} -c '^Running' "${RESULTS}");
-	${GREP_EXE} ^Failed "${RESULTS}"
+	@if [[ "$$(${GREP_EXE} -c '^Failed'  "${RESULTS}")" != 0 ]]; then \
+          ${GREP_EXE} ^Failed "${RESULTS}"; \
+        fi
 
 # This line remains to indicate the last line of this file
