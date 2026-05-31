@@ -1,6 +1,6 @@
 [package]
 name = "auth-file"
-version = "0.8.10"
+version = "0.8.10+d"
 edition = "2021"
 authors = ["David Black <dcblack@mac.com>"]
 rust-version = "1.78"
@@ -34,7 +34,7 @@ sha2 = "0.10"
 thiserror = "1.0"
 dirs = "5.0"
 keyring = "2.3"
-rpassword = "7.3"
+rpassword = "7.4"
 chacha20poly1305 = "0.10"
 argon2 = "0.5"
 age = "0.11.3"
@@ -43,6 +43,6 @@ age = "0.11.3"
 windows = { version = "0.58", features = ["Security_Credentials_UI", "Foundation"] }
 
 [dev-dependencies]
-assert_cmd = "2.0"
+assert_cmd = "2.1"
 predicates = "3.1"
-tempfile = "3.10"
+tempfile = "3.27"

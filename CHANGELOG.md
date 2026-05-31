@@ -1,3 +1,10 @@
+## 0.8.10c
+
+- Added `--config=FILE` support for auth configuration files.
+- Added default `$HOME/.authrc` support when present.
+- Added config parsing for supported `AUTH_*` variables with Bash-style comments, whitespace, and quoted values.
+- Added tests for config-file supplied `AUTH_OPTIONS`, quoted/commented config values, missing config files, unknown config variables, and `AUTH_OPTIONS` redirection to `--config=FILE`.
+
 ## 0.8.10
 
 - Added additional regression tests for read-only `--check`, cache semantics, and `setup.profile` tamper detection.

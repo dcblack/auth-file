@@ -9,7 +9,7 @@ use authlib::{
 };
 use std::env;
 use std::io::{self, IsTerminal, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 
 const HELP: &str = r#"Name
@@ -36,6 +36,7 @@ Options
   --change-password          Change auth password using current password or burner[^2]
   --check, -ck               Verify specified files are valid
   --color WHEN               Color output: auto, always, never [default: auto]
+  --config=FILE              Read auth configuration from FILE [default: ~/.authrc]
   --default-root             Use default full-path file identity
   --dir DIR, -d DIR          Specify database directory [default: ~/.auth]
   --force, -f                Reserved for future non-security confirmation prompts
@@ -98,6 +99,8 @@ enum CommandMode {
 
 const ROOT_SPECIFIED_MORE_THAN_ONCE: &str = "Attempt to specify root directory more than once.";
 const SECRET_PROVIDER_MORE_THAN_ONCE: &str = "Attempt to specify secret provider more than once.";
+const DEFAULT_CONFIG_FILE: &str = ".authrc";
+const DISABLE_CONFIG_ENV: &str = "AUTH_CONFIG_DISABLE";
 
 fn main() -> ExitCode {
     match run() {
@@ -187,6 +190,8 @@ fn parse_one_arg(args: &[String], i: &mut usize, state: &mut CliState) -> Result
                 .ok_or_else(|| "missing value after --color".to_string())?;
             state.options.color = parse_color_mode(mode)?;
         }
+        unknown if unknown.starts_with("--config=") => {}
+        "--config" => return Err("use --config=FILE".to_string()),
         "--default-root" => {
             note_root_directive(state)?;
             state.options.root_dir = None;
@@ -367,14 +372,167 @@ fn collect_args() -> Result<Vec<String>, String> {
         return Ok(cli_args);
     }
 
-    let mut args = if let Ok(auth_options) = env::var("AUTH_OPTIONS") {
+    let env_args = if let Ok(auth_options) = env::var("AUTH_OPTIONS") {
         split_auth_options(&auth_options)?
     } else {
         Vec::new()
     };
 
+    let config = load_config_args(&cli_args, &env_args)?;
+    apply_config_environment(&config.variables);
+
+    let mut args = config.args;
+    args.extend(env_args);
     args.extend(cli_args);
     Ok(args)
+}
+
+struct ConfigArgs {
+    args: Vec<String>,
+    variables: Vec<(String, String)>,
+}
+
+fn load_config_args(cli_args: &[String], env_args: &[String]) -> Result<ConfigArgs, String> {
+    if env::var_os(DISABLE_CONFIG_ENV).is_some() {
+        return Ok(ConfigArgs {
+            args: Vec::new(),
+            variables: Vec::new(),
+        });
+    }
+
+    let Some(path) = config_path(cli_args, env_args) else {
+        return Ok(ConfigArgs {
+            args: Vec::new(),
+            variables: Vec::new(),
+        });
+    };
+
+    if !path.exists() {
+        if explicit_config_requested(cli_args) || explicit_config_requested(env_args) {
+            return Err(format!("configuration file not found: {}", path.display()));
+        }
+        return Ok(ConfigArgs {
+            args: Vec::new(),
+            variables: Vec::new(),
+        });
+    }
+
+    read_config_file(&path)
+}
+
+fn config_path(cli_args: &[String], env_args: &[String]) -> Option<PathBuf> {
+    explicit_config_path(cli_args)
+        .or_else(|| explicit_config_path(env_args))
+        .or_else(default_config_path)
+}
+
+fn explicit_config_path(args: &[String]) -> Option<PathBuf> {
+    args.iter()
+        .find_map(|arg| arg.strip_prefix("--config=").map(PathBuf::from))
+}
+
+fn explicit_config_requested(args: &[String]) -> bool {
+    args.iter().any(|arg| arg.starts_with("--config="))
+}
+
+fn default_config_path() -> Option<PathBuf> {
+    dirs::home_dir().map(|home| home.join(DEFAULT_CONFIG_FILE))
+}
+
+fn read_config_file(path: &Path) -> Result<ConfigArgs, String> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| format!("failed to read configuration file {}: {e}", path.display()))?;
+
+    let mut args = Vec::new();
+    let mut variables = Vec::new();
+
+    for (line_index, raw_line) in text.lines().enumerate() {
+        let line = strip_config_comment(raw_line).trim().to_string();
+        if line.is_empty() {
+            continue;
+        }
+
+        let Some((name, value)) = line.split_once('=') else {
+            return Err(format!(
+                "invalid configuration line {}: expected NAME=VALUE",
+                line_index + 1
+            ));
+        };
+
+        let name = name.trim();
+        let value = parse_config_value(value.trim()).map_err(|e| {
+            format!(
+                "invalid configuration line {} for {name}: {e}",
+                line_index + 1
+            )
+        })?;
+
+        match name {
+            "AUTH_OPTIONS" => args.extend(split_auth_options(&value)?),
+            "AUTH_TEST_FALLBACK_PASSWORD"
+            | "AUTH_TEST_FALLBACK_PASSWORD_CONFIRM"
+            | "AUTH_TEST_CURRENT_PASSWORD_OR_BURNER"
+            | "AUTH_MACOS_TOUCHID_HELPER" => variables.push((name.to_string(), value)),
+            other => {
+                return Err(format!(
+                    "unsupported configuration variable {other} on line {}",
+                    line_index + 1
+                ));
+            }
+        }
+    }
+
+    Ok(ConfigArgs { args, variables })
+}
+
+fn apply_config_environment(variables: &[(String, String)]) {
+    for (name, value) in variables {
+        if env::var_os(name).is_none() {
+            env::set_var(name, value);
+        }
+    }
+}
+
+fn strip_config_comment(line: &str) -> String {
+    let mut out = String::new();
+    let mut quote: Option<char> = None;
+    let mut chars = line.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        match (quote, ch) {
+            (None, '#') => break,
+            (None, '\'' | '"') => {
+                quote = Some(ch);
+                out.push(ch);
+            }
+            (Some(q), c) if c == q => {
+                quote = None;
+                out.push(c);
+            }
+            (Some(_), '\\') => {
+                out.push(ch);
+                if let Some(next) = chars.next() {
+                    out.push(next);
+                }
+            }
+            (_, c) => out.push(c),
+        }
+    }
+
+    out
+}
+
+fn parse_config_value(value: &str) -> Result<String, String> {
+    if value.is_empty() {
+        return Ok(String::new());
+    }
+
+    let parsed = split_auth_options(value)?;
+    match parsed.as_slice() {
+        [] => Ok(String::new()),
+        [single] => Ok(single.clone()),
+        _ => Ok(value.to_string()),
+    }
 }
 
 fn split_auth_options(input: &str) -> Result<Vec<String>, String> {

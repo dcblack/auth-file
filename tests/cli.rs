@@ -14,7 +14,8 @@ const TEST_PASSWORD: &str = "Long-Test-Password-2026!";
 
 fn auth_cmd() -> Command {
     let mut cmd = Command::cargo_bin("auth").expect("auth binary exists");
-    cmd.env("AUTH_TEST_FALLBACK_PASSWORD", TEST_PASSWORD)
+    cmd.env("AUTH_CONFIG_DISABLE", "1")
+        .env("AUTH_TEST_FALLBACK_PASSWORD", TEST_PASSWORD)
         .env("AUTH_TEST_FALLBACK_PASSWORD_CONFIRM", TEST_PASSWORD)
         .env("AUTH_TEST_CURRENT_PASSWORD_OR_BURNER", TEST_PASSWORD);
     cmd
@@ -47,6 +48,7 @@ fn version_option_works() {
 fn help_option_works_even_with_auth_options() {
     Command::cargo_bin("auth")
         .unwrap()
+        .env("AUTH_CONFIG_DISABLE", "1")
         .env("AUTH_OPTIONS", "-d ./auth-test")
         .arg("--help")
         .assert()
@@ -56,6 +58,7 @@ fn help_option_works_even_with_auth_options() {
 fn short_help_option_works_even_with_auth_options() {
     Command::cargo_bin("auth")
         .unwrap()
+        .env("AUTH_CONFIG_DISABLE", "1")
         .env("AUTH_OPTIONS", "-d ./auth-test")
         .arg("-h")
         .assert()
@@ -65,8 +68,114 @@ fn short_help_option_works_even_with_auth_options() {
 fn version_option_works_even_with_auth_options() {
     Command::cargo_bin("auth")
         .unwrap()
+        .env("AUTH_CONFIG_DISABLE", "1")
         .env("AUTH_OPTIONS", "-d ./auth-test")
         .arg("--version")
+        .assert()
+        .success();
+}
+
+#[test]
+fn config_file_can_supply_auth_options() {
+    let tmp = tempdir().unwrap();
+    let db = tmp.path().join("auth-test");
+    let config = tmp.path().join("authrc");
+    let file = tmp.path().join("configured.txt");
+    fs::write(&file, "configured contents\n").unwrap();
+    fs::write(&config, format!("AUTH_OPTIONS=-d {}\n", db.display())).unwrap();
+
+    let mut write = auth_cmd();
+    write
+        .env_remove("AUTH_CONFIG_DISABLE")
+        .arg(format!("--config={}", config.display()))
+        .arg("--request-password")
+        .arg("--write")
+        .arg(&file)
+        .assert()
+        .success();
+
+    let mut check = auth_cmd();
+    check
+        .env_remove("AUTH_CONFIG_DISABLE")
+        .arg(format!("--config={}", config.display()))
+        .arg("--check")
+        .arg(&file)
+        .assert()
+        .success();
+}
+
+#[test]
+fn config_file_ignores_comments_and_accepts_quoted_values() {
+    let tmp = tempdir().unwrap();
+    let db = tmp.path().join("auth-test");
+    let config = tmp.path().join("authrc");
+    let file = tmp.path().join("quoted.txt");
+    fs::write(&file, "quoted config contents\n").unwrap();
+    fs::write(
+        &config,
+        format!(
+            "\n  # comments are ignored\nAUTH_OPTIONS='-d {} --default-root' # inline comments are ignored\n",
+            db.display()
+        ),
+    )
+    .unwrap();
+
+    let mut cmd = auth_cmd();
+    cmd.env_remove("AUTH_CONFIG_DISABLE")
+        .arg(format!("--config={}", config.display()))
+        .arg("--request-password")
+        .arg("--write")
+        .arg(&file)
+        .assert()
+        .success();
+}
+
+#[test]
+fn config_file_rejects_unknown_variables() {
+    let tmp = tempdir().unwrap();
+    let config = tmp.path().join("authrc");
+    fs::write(&config, "PATH=/tmp\n").unwrap();
+
+    let mut cmd = auth_cmd();
+    cmd.env_remove("AUTH_CONFIG_DISABLE")
+        .arg(format!("--config={}", config.display()))
+        .arg("--stats")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "unsupported configuration variable PATH",
+        ));
+}
+
+#[test]
+fn explicit_config_file_must_exist() {
+    let tmp = tempdir().unwrap();
+    let config = tmp.path().join("missing-authrc");
+
+    let mut cmd = auth_cmd();
+    cmd.env_remove("AUTH_CONFIG_DISABLE")
+        .arg(format!("--config={}", config.display()))
+        .arg("--stats")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("configuration file not found"));
+}
+
+#[test]
+fn auth_options_config_file_can_redirect_config() {
+    let tmp = tempdir().unwrap();
+    let db = tmp.path().join("auth-test");
+    let config = tmp.path().join("authrc");
+    let file = tmp.path().join("env-config.txt");
+    fs::write(&file, "env config contents\n").unwrap();
+    fs::write(&config, format!("AUTH_OPTIONS=-d {}\n", db.display())).unwrap();
+
+    let mut cmd = auth_cmd();
+    cmd.env_remove("AUTH_CONFIG_DISABLE")
+        .env("AUTH_OPTIONS", format!("--config={}", config.display()))
+        .arg("--request-password")
+        .arg("--write")
+        .arg(&file)
         .assert()
         .success();
 }
