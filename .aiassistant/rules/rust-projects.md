@@ -3,5 +3,5 @@ apply: always
 ---
 
 Be Rust idiomatic.
-Conform to clippy rules.
 Be conscientious about security issues.
+Make certain to pass: cargo clippy --all-targets --all-features -- -D warnings

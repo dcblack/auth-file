@@ -1,5 +1,8 @@
 ## 0.9.0
 
+- Added structured TOML keys such as `cache_time`, `dir`, `root_dir`, `default_root`, `request_password`, `secret_provider`, and `color`.
+- Added `shadow-rs` build metadata for expanded `--version` output.
+- Introduced an `EffectiveConfig` assembly stage for config/env/CLI layering.
 - Changed auth configuration files from shell-style `VAR=VALUE` lines to TOML.
 - Added TOML `options = [...]` support for auth options that are applied before `AUTH_OPTIONS` and command-line arguments.
 - Added `--config=` support to disable default configuration loading for a single invocation.

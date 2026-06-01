@@ -3,7 +3,7 @@ name = "auth-file"
 version = "0.9.0"
 edition = "2021"
 authors = ["David Black <dcblack@mac.com>"]
-rust-version = "1.78"
+rust-version = "1.95.0"
 description = "Command-line file authorization and validation utility with privacy-preserving authorization records"
 license = "Apache-2.0"
 repository = "https://github.com/YOUR-ORG/auth-file"
@@ -29,21 +29,26 @@ hmac = "0.12"
 rand_core = { version = "0.6", features = ["getrandom"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
 sha2 = "0.10"
-thiserror = "1.0"
-dirs = "5.0"
-keyring = "2.3"
+thiserror = "2"
+dirs = "6"
+keyring = "4"
+keyring-core = "1"
 rpassword = "7.4"
 chacha20poly1305 = "0.10"
 argon2 = "0.5"
 age = "0.11.3"
-toml = "0.8"
+shadow-rs = { version = "2", default-features = false }
+toml = "1"
 
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.58", features = ["Security_Credentials_UI", "Foundation"] }
+windows = { version = "0.62", features = ["Security_Credentials_UI", "Foundation"] }
 
 [dev-dependencies]
 assert_cmd = "2.1"
 predicates = "3.1"
 tempfile = "3.27"
+
+[build-dependencies]
+shadow-rs = "2"

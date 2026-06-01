@@ -12,6 +12,10 @@ use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 
+mod built_info {
+    include!(concat!(env!("OUT_DIR"), "/shadow.rs"));
+}
+
 const HELP: &str = r#"Name
 ----
 
@@ -126,6 +130,16 @@ fn run() -> Result<bool, String> {
     execute_args(&args)
 }
 
+fn print_version() {
+    println!("auth {VERSION}");
+    println!("build: {}", env!("AUTH_BUILD_KIND"));
+    println!("branch: {}", built_info::BRANCH);
+    println!("commit: {}", built_info::SHORT_COMMIT);
+    println!("target: {}", built_info::BUILD_TARGET);
+    println!("rustc: {}", built_info::RUST_VERSION);
+    println!("built: {}", built_info::BUILD_TIME);
+}
+
 fn handle_top_level_command(args: &[String]) -> bool {
     if args.is_empty() {
         print_help();
@@ -136,7 +150,7 @@ fn handle_top_level_command(args: &[String]) -> bool {
         return true;
     }
     if args[0] == "--version" {
-        println!("auth {VERSION} ({})", env!("AUTH_BUILD_KIND"));
+        print_version();
         return true;
     }
     false
@@ -407,34 +421,34 @@ fn collect_args() -> Result<Vec<String>, String> {
     Ok(args)
 }
 
-struct ConfigArgs {
+struct EffectiveConfig {
     args: Vec<String>,
     variables: Vec<(String, String)>,
 }
 
-fn load_config_args(cli_args: &[String], env_args: &[String]) -> Result<ConfigArgs, String> {
-    if env::var_os(DISABLE_CONFIG_ENV).is_some() {
-        return Ok(ConfigArgs {
+impl EffectiveConfig {
+    const fn empty() -> Self {
+        Self {
             args: Vec::new(),
             variables: Vec::new(),
-        });
+        }
+    }
+}
+
+fn load_config_args(cli_args: &[String], env_args: &[String]) -> Result<EffectiveConfig, String> {
+    if env::var_os(DISABLE_CONFIG_ENV).is_some() {
+        return Ok(EffectiveConfig::empty());
     }
 
     let Some(path) = config_path(cli_args, env_args) else {
-        return Ok(ConfigArgs {
-            args: Vec::new(),
-            variables: Vec::new(),
-        });
+        return Ok(EffectiveConfig::empty());
     };
 
     if !path.exists() {
         if explicit_config_requested(cli_args) || explicit_config_requested(env_args) {
             return Err(format!("configuration file not found: {}", path.display()));
         }
-        return Ok(ConfigArgs {
-            args: Vec::new(),
-            variables: Vec::new(),
-        });
+        return Ok(EffectiveConfig::empty());
     }
 
     read_config_file(&path)
@@ -473,7 +487,7 @@ fn default_config_path() -> Option<PathBuf> {
     dirs::home_dir().map(|home| home.join(DEFAULT_CONFIG_FILE))
 }
 
-fn read_config_file(path: &Path) -> Result<ConfigArgs, String> {
+fn read_config_file(path: &Path) -> Result<EffectiveConfig, String> {
     let text = std::fs::read_to_string(path)
         .map_err(|e| format!("failed to read configuration file {}: {e}", path.display()))?;
     let value: toml::Value = text.parse().map_err(|e| {
@@ -499,16 +513,86 @@ fn read_config_file(path: &Path) -> Result<ConfigArgs, String> {
             | "AUTH_TEST_FALLBACK_PASSWORD_CONFIRM"
             | "AUTH_TEST_CURRENT_PASSWORD_OR_BURNER"
             | "AUTH_MACOS_TOUCHID_HELPER" => {
-                let Some(value) = value.as_str() else {
-                    return Err(format!("configuration key {name} must be a string"));
-                };
-                variables.push((name.clone(), value.to_string()));
+                let value = config_string(name, value)?;
+                variables.push((name.clone(), value));
             }
+            "cache_time" => {
+                args.push(format!("--cache-time={}", config_u64(name, value)?));
+            }
+            "color" => {
+                args.push(format!("--color={}", config_string(name, value)?));
+            }
+            "default_root" => {
+                if config_bool(name, value)? {
+                    args.push("--default-root".to_string());
+                }
+            }
+            "dir" | "db_dir" => {
+                args.push(format!("--dir={}", config_string(name, value)?));
+            }
+            "force" => {
+                if config_bool(name, value)? {
+                    args.push("--force".to_string());
+                }
+            }
+            "quiet" => {
+                if config_bool(name, value)? {
+                    args.push("--quiet".to_string());
+                }
+            }
+            "request_password" => {
+                if config_bool(name, value)? {
+                    args.push("--request-password".to_string());
+                }
+            }
+            "root_dir" => {
+                let root = config_string(name, value)?;
+                args.push(format!("--root-dir={root}"));
+            }
+            "secret_provider" => {
+                args.push(format!("--secret-provider={}", config_string(name, value)?));
+            }
+            "silent" => {
+                if config_bool(name, value)? {
+                    args.push("--silent".to_string());
+                }
+            }
+            "verbose" => match value {
+                toml::Value::Boolean(true) => args.push("--verbose".to_string()),
+                toml::Value::Integer(n) if *n > 0 => args.push("--verbose".to_string()),
+                toml::Value::Boolean(false) | toml::Value::Integer(0) => {}
+                toml::Value::Integer(n) if *n < 0 => args.push("--silent".to_string()),
+                _ => {
+                    return Err(format!(
+                        "configuration key {name} must be a boolean or integer"
+                    ))
+                }
+            },
             other => return Err(format!("unsupported configuration key {other}")),
         }
     }
 
-    Ok(ConfigArgs { args, variables })
+    Ok(EffectiveConfig { args, variables })
+}
+
+fn config_string(name: &str, value: &toml::Value) -> Result<String, String> {
+    value
+        .as_str()
+        .map(ToString::to_string)
+        .ok_or_else(|| format!("configuration key {name} must be a string"))
+}
+
+fn config_bool(name: &str, value: &toml::Value) -> Result<bool, String> {
+    value
+        .as_bool()
+        .ok_or_else(|| format!("configuration key {name} must be a boolean"))
+}
+
+fn config_u64(name: &str, value: &toml::Value) -> Result<u64, String> {
+    let Some(value) = value.as_integer() else {
+        return Err(format!("configuration key {name} must be an integer"));
+    };
+    u64::try_from(value).map_err(|_| format!("configuration key {name} must be non-negative"))
 }
 
 fn extend_config_options(

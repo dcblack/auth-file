@@ -24,6 +24,7 @@ use chacha20poly1305::aead::{Aead, KeyInit};
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use hmac::{Hmac, Mac};
+use keyring_core::Entry;
 use rand_core::{OsRng, RngCore};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -31,6 +32,7 @@ use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::{self, IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 
@@ -1571,8 +1573,7 @@ fn current_machine_hash() -> String {
 }
 
 fn store_secret(name: &str, secret: &[u8]) -> Result<(), AuthError> {
-    let entry = keyring::Entry::new(KEYRING_SERVICE, name)
-        .map_err(|e| AuthError::KeyStorage(e.to_string()))?;
+    let entry = keyring_entry(name)?;
     entry
         .set_password(&B64.encode(secret))
         .map_err(|e| AuthError::KeyStorage(e.to_string()))
@@ -1691,8 +1692,7 @@ fn get_or_create_secret(
         return Ok(secret);
     }
 
-    let entry = keyring::Entry::new(KEYRING_SERVICE, name)
-        .map_err(|e| AuthError::KeyStorage(e.to_string()))?;
+    let entry = keyring_entry(name)?;
 
     if let Ok(secret) = entry.get_password() {
         B64.decode(secret.as_bytes())
@@ -1708,6 +1708,20 @@ fn get_or_create_secret(
             "database exists but credential-store secret is missing: {name}"
         )))
     }
+}
+
+fn keyring_entry(name: &str) -> Result<Entry, AuthError> {
+    ensure_keyring_store()?;
+    Entry::new(KEYRING_SERVICE, name).map_err(|e| AuthError::KeyStorage(e.to_string()))
+}
+
+fn ensure_keyring_store() -> Result<(), AuthError> {
+    static KEYRING_STORE: OnceLock<Result<(), String>> = OnceLock::new();
+    KEYRING_STORE
+        .get_or_init(|| keyring::use_native_store(false).map_err(|e| e.to_string()))
+        .as_ref()
+        .map_err(|e| AuthError::KeyStorage(e.clone()))
+        .copied()
 }
 
 fn key_namespace(db_dir: &Path) -> String {

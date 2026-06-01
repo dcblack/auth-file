@@ -3,6 +3,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn main() {
+    shadow_rs::ShadowBuilder::builder()
+        .build()
+        .expect("shadow-rs build metadata failed");
+
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=platform/macos/auth-macos-touchid.swift");
 

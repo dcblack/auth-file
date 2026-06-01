@@ -41,7 +41,10 @@ fn version_option_works() {
         .assert()
         .success()
         .stdout(predicate::str::contains("auth "))
-        .stdout(predicate::str::contains("(dev)"));
+        .stdout(predicate::str::contains("build:"))
+        .stdout(predicate::str::contains("commit:"))
+        .stdout(predicate::str::contains("target:"))
+        .stdout(predicate::str::contains("rustc:"));
 }
 
 #[test]
@@ -125,6 +128,51 @@ fn config_file_ignores_comments_and_accepts_quoted_values() {
         .arg(format!("--config={}", config.display()))
         .arg("--request-password")
         .arg("--write")
+        .arg(&file)
+        .assert()
+        .success();
+}
+
+#[test]
+fn config_file_accepts_structured_toml_options() {
+    let tmp = tempdir().unwrap();
+    let db = tmp.path().join("auth-test");
+    let root = tmp.path().join("root");
+    let config = tmp.path().join("authrc");
+    let file = root.join("structured.txt");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(&file, "structured config contents\n").unwrap();
+    fs::write(
+        &config,
+        format!(
+            r#"
+dir = "{}"
+root_dir = "{}"
+cache_time = 60
+color = "never"
+request_password = true
+secret_provider = "prompt"
+"#,
+            db.display(),
+            root.display()
+        ),
+    )
+    .unwrap();
+
+    let mut write = auth_cmd();
+    write
+        .env_remove("AUTH_CONFIG_DISABLE")
+        .arg(format!("--config={}", config.display()))
+        .arg("--write")
+        .arg(&file)
+        .assert()
+        .success();
+
+    let mut check = auth_cmd();
+    check
+        .env_remove("AUTH_CONFIG_DISABLE")
+        .arg(format!("--config={}", config.display()))
+        .arg("--check")
         .arg(&file)
         .assert()
         .success();
