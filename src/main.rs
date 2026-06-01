@@ -490,23 +490,17 @@ fn default_config_path() -> Option<PathBuf> {
 fn read_config_file(path: &Path) -> Result<EffectiveConfig, String> {
     let text = std::fs::read_to_string(path)
         .map_err(|e| format!("failed to read configuration file {}: {e}", path.display()))?;
-    let value: toml::Value = text.parse().map_err(|e| {
+    let table: toml::Table = toml::from_str(&text).map_err(|e| {
         format!(
             "failed to parse TOML configuration file {}: {e}",
             path.display()
         )
     })?;
-    let Some(table) = value.as_table() else {
-        return Err(format!(
-            "invalid configuration file {}: expected TOML table",
-            path.display()
-        ));
-    };
 
     let mut args = Vec::new();
     let mut variables = Vec::new();
 
-    for (name, value) in table {
+    for (name, value) in &table {
         match name.as_str() {
             "options" | "AUTH_OPTIONS" => extend_config_options(name, value, &mut args)?,
             "AUTH_TEST_FALLBACK_PASSWORD"
