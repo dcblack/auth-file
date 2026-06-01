@@ -22,6 +22,7 @@ Options
   --change-password          Change auth password using current password or burner[^2]
   --check, -ck               Verify specified files are valid
   --color WHEN               Color output: auto, always, never [default: auto]
+  --config=FILE              Read auth configuration from FILE [default: ~/.authrc]
   --default-root             Use default full-path file identity
   --dir DIR, -d DIR          Specify database directory [default: ~/.auth]
   --force, -f                Reserved for future non-security confirmation prompts
@@ -30,6 +31,7 @@ Options
   --remove, -rm              Remove authorization[^1]
   --request-password         Require Auth password/burner instead of platform authorization
   --root-dir=PATH            Store/check paths relative to this canonical root
+  --secret-provider PROVIDER Secret provider: prompt, env, os-keyring, 1password, bitwarden
   --show-dir                 Display auth storage paths[^2]
   --silent, -s               Silent even with failure, useful in scripts
   --stats                    Display database statistics[^2]
