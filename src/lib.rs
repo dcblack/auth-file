@@ -4,11 +4,13 @@
 //! - `Write` and `Remove` may require user authorization.
 //! - `Check` verifies stored cryptographic records without prompting.
 //!
-//! Version 0.8.10 stores authorization records in `SQLite` and moves normal-use
-//! secret keys into the platform credential store. Version 0.8.10 adds an
-//! Argon2id-protected auth password and one-time burner passwords for
-//! recovery when platform authorization is unavailable. Test databases named
-//! `auth-test` keep file-backed keys for CI and development only.
+//! Authorization records live in `SQLite`. Normal-use signing/HMAC key material is
+//! loaded through the selected secret provider, while `auth-test` databases keep
+//! file-backed keys so tests and CI remain deterministic and non-interactive.
+//!
+//! The library deliberately keeps `Check` read-only: checks validate file identity,
+//! content digest, size, and record signature without prompting or refreshing
+//! authorization cache state.
 
 #![forbid(unsafe_code)]
 #![deny(warnings)]
@@ -280,6 +282,9 @@ pub fn auth_report(
     file_list: Vec<String>,
     options: &AuthOptions,
 ) -> Result<AuthReport, AuthError> {
+    // Storage and keys must be available for all operations, including checks.
+    // Only database-changing actions authorize later; `Check` remains read-only
+    // from a user-authentication perspective so it can safely guard scripts.
     let database_was_missing = !database_path(&options.db_dir).exists();
     ensure_storage(&options.db_dir)?;
     let conn = open_database(&options.db_dir)?;
@@ -293,6 +298,9 @@ pub fn auth_report(
     )?;
 
     if matches!(action, ActionType::Write | ActionType::Remove) {
+        // First protected use of a new database establishes recovery material
+        // before authorization is required. Subsequent protected operations can
+        // use platform auth, Auth password/burner fallback, or a valid cache.
         ensure_recovery_initialized(&conn, &options.db_dir, &keys)?;
 
         if options.authorization != AuthorizationMode::None {
@@ -910,6 +918,8 @@ fn path_hmac(identity: &str, key: &[u8]) -> String {
 }
 
 fn path_identity_for_existing(path: &Path, options: &AuthOptions) -> Result<String, AuthError> {
+    // Prefix identities with their mode so a full-path record and a root-relative
+    // record cannot collide even if their final rendered strings happen to match.
     if let Some(root_dir) = effective_root_dir(options)? {
         let relative = path
             .strip_prefix(&root_dir)
@@ -1120,6 +1130,9 @@ fn authorize_or_use_cache(
     keys: &DbKeys,
     options: &AuthOptions,
 ) -> Result<(), AuthError> {
+    // Cache lookup is always attempted for protected operations. The current
+    // command's `cache_seconds` controls only whether a successful auth refreshes
+    // the cache, not whether an existing cache may be used.
     if cached_authorization_is_valid(conn, db_dir, keys)? {
         return Ok(());
     }
@@ -1145,6 +1158,9 @@ fn cached_authorization_is_valid(
     db_dir: &Path,
     keys: &DbKeys,
 ) -> Result<bool, AuthError> {
+    // The cache row is treated as untrusted database content. Its expiry and
+    // machine binding must match a MAC derived from the path-HMAC secret; a user
+    // who can edit SQLite but lacks key material should not be able to extend it.
     let row: Option<(i64, String, String)> = conn
         .query_row(
             "SELECT authorized_until_unix, machine_id_hash, cache_mac FROM authorization_cache WHERE id = 1",
@@ -1506,6 +1522,10 @@ fn write_burner_file_age(
     password: &str,
     burners: &[String],
 ) -> Result<PathBuf, AuthError> {
+    // Burner passwords are recovery secrets, so write them as a standard age file
+    // rather than displaying them in terminal scrollback. The Auth password is
+    // the passphrase, which means the user must still save the decrypted burners
+    // somewhere independent if they want protection against forgetting it.
     let path = db_dir.join(BURNER_FILE);
     let plaintext = burner_file_plaintext(db_dir, burners);
     let passphrase = SecretString::from(password.to_owned());

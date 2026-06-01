@@ -19,7 +19,7 @@ mod built_info {
 const HELP: &str = r#"Name
 ----
 
-  auth - set, check, or remove authorization for files
+  auth - authorize and validate files before scripts or automation use them
 
 Synopsis
 --------
@@ -37,53 +37,111 @@ Options
 -------
 
   --cache-time=SECONDS       Cache successful authorization for 0-120 seconds [default: 0]
-  --change-password          Change auth password using current password or burner[^2]
-  --check, -ck               Verify specified files are valid
-  --color=WHEN              Color output: auto, always, never [default: auto]
+  --change-password          Change Auth password using current password or burner[^2]
+  --check, -ck               Verify specified files; read-only and does not require authorization
+  --color=WHEN               Color output: auto, always, never [default: auto]
   --config=FILE              Read TOML configuration from FILE [default: ~/.authrc]
+  --config=                  Disable configuration loading for this invocation
   --default-root             Use default full-path file identity
   --dir=DIR, -d DIR          Specify database directory [default: ~/.auth]
   --force, -f                Reserved for future non-security confirmation prompts
   --help, -h                 Display this text using a pager when interactive
   --quiet, -q                Report failures only
-  --remove, -rm              Remove authorization[^1]
-  --request-password         Require Auth password/burner instead of platform authorization
+  --remove, -rm              Remove authorization records[^1]
+  --request-password         Prefer Auth password/burner instead of platform authorization
   --root-dir=PATH            Store/check paths relative to this canonical root
   --secret-provider=PROVIDER Secret provider: prompt, env, os-keyring, 1password, bitwarden
   --show-dir                 Display auth storage paths[^2]
   --silent, -s               Silent even with failure, useful in scripts
   --stats                    Display database statistics[^2]
   --verbose, -v              Increase verbosity
-  --version                  Display version
+  --version                  Display version and build metadata
   --write, -wr               Authorize files[^1]
 
 [^1]: Requires platform authorization or a valid cached authorization session.
 
 [^2]: Requires platform authorization, cached authorization session, or Auth password.
 
-Environment
------------
+Configuration
+-------------
 
-  AUTH_OPTIONS               Initial options parsed after config and before command-line arguments.
-                             Example: export AUTH_OPTIONS="--dir=./auth-test"
+  Configuration is loaded in this order:
 
-  NO_COLOR, NOCOLOR          Disable colored output unless --color always is given.
+    1. TOML config file
+    2. AUTH_OPTIONS environment variable
+    3. command-line arguments
 
-  PAGER                      Pager used for --help when stdout is a terminal.
-                             Defaults to less -R, then more.
+  The default config path is ~/.authrc. Use --config=FILE to select another file.
+  Use --config= to disable config loading. This is useful when authorizing or
+  repairing the config file itself.
+
+  Example TOML:
+
+    options = [
+      "--default-root",
+      "--secret-provider=1password",
+    ]
+    dir = "/Users/me/.auth"
+    color = "auto"
+    cache_time = 60
+    request_password = false
+
+  Supported structured TOML keys:
+
+    options, AUTH_OPTIONS, cache_time, color, default_root, dir, db_dir,
+    force, quiet, request_password, root_dir, secret_provider, silent, verbose
+
+  Supported config/environment variables:
+
+    AUTH_OPTIONS
+    AUTH_TEST_FALLBACK_PASSWORD
+    AUTH_TEST_FALLBACK_PASSWORD_CONFIRM
+    AUTH_TEST_CURRENT_PASSWORD_OR_BURNER
+    AUTH_MACOS_TOUCHID_HELPER
+    AUTH_CONFIG_DISABLE
+    NO_COLOR, NOCOLOR
+    PAGER
+
+  AUTH_TEST_* variables are honored only when the database directory basename
+  is exactly auth-test.
+
+Root Directives
+---------------
+
+  --default-root and --root-dir=PATH are root directives. At most one root
+  directive may appear across the config file, AUTH_OPTIONS, and command line.
+  A second root directive fails with:
+
+    Error: Attempt to specify root directory more than once.
+
+Secret Providers
+----------------
+
+  Supported provider names and aliases:
+
+    prompt
+    env, environment
+    os-keyring, keyring, keys, oskeyring
+    1password, 1p, 1pw
+    bitwarden, bw
+
+  Current 1Password support uses op read op://Private/<name>/password for the
+  internal secret name requested by auth.
 
 Compatibility
 -------------
 
   Options may appear between filenames, allowing a mix of actions in one call.
-  Configuration is processed first, then AUTH_OPTIONS, then command-line arguments.
+  Long options that take values prefer --name=value syntax. Short options such
+  as -d still take their value as the next argument.
 
-  Example:
+Examples
+--------
 
     auth --write a.txt b.txt
     auth --check a.txt b.txt
     auth --request-password --cache-time=60 --root-dir=. --write a.txt b.txt
-    auth --default-root --check a.txt
+    auth --default-root --check setup.profile
 
 Exit Status
 -----------
@@ -393,6 +451,10 @@ fn flush_current_files(state: &mut CliState) {
 }
 
 fn collect_args() -> Result<Vec<String>, String> {
+    // Build one argument stream in the security-relevant precedence order:
+    // config file first, then AUTH_OPTIONS, then the real command line. Help and
+    // version are intentionally checked before loading config so a bad ~/.authrc
+    // cannot prevent a user from asking for usage/version information.
     let cli_args: Vec<String> = env::args().skip(1).collect();
 
     if cli_args
@@ -422,7 +484,12 @@ fn collect_args() -> Result<Vec<String>, String> {
 }
 
 struct EffectiveConfig {
+    // Options synthesized from TOML are converted into the same canonical tokens
+    // as CLI/AUTH_OPTIONS. That keeps validation rules, such as duplicate root
+    // directives, centralized in the normal parser.
     args: Vec<String>,
+    // A small compatibility layer for existing test/helper environment variables.
+    // These are applied only when the process environment did not already set one.
     variables: Vec<(String, String)>,
 }
 
@@ -488,6 +555,9 @@ fn default_config_path() -> Option<PathBuf> {
 }
 
 fn read_config_file(path: &Path) -> Result<EffectiveConfig, String> {
+    // The config file is a TOML document, not a shell fragment. Structured keys
+    // are preferred, but `options = [...]` remains available for new CLI options
+    // that have not yet been given first-class TOML keys.
     let text = std::fs::read_to_string(path)
         .map_err(|e| format!("failed to read configuration file {}: {e}", path.display()))?;
     let table: toml::Table = toml::from_str(&text).map_err(|e| {

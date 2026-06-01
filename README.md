@@ -1,79 +1,91 @@
-# auth-file 0.8.9
-
 # auth-file / `auth`
 
-`auth` is a small command-line tool and Rust library for authorizing and validating files in scripts.
+`auth` is a small command-line tool and Rust library for authorizing and validating files before scripts or automation use them.
 
-The published crate name is currently set to `auth-file` because the crate name `auth` appears to already be occupied on crates.io. The installed binary remains `auth`.
+The published crate name is `auth-file`; the installed binary is `auth`.
 
-## Status
+## Primary use case
 
-Version: `0.8.6`
-
-This is a development implementation intended for review and platform testing.
-
-## Auth password recovery
-
-Normal databases can establish an Auth password and ten one-time burner passwords. The Auth password is stored as an Argon2id password hash. A backup copy of the database key material is encrypted with a key derived from the Auth password. Burner passwords can authorize recovery operations exactly once. To avoid terminal scrollback exposure, generated burner passwords are written to an age-encrypted file named `auth-burners.age` inside the auth directory instead of being printed directly.
-
-Use:
+The original motivating use case is safely sourcing a local setup file only when it still matches a previously authorized version:
 
 ```bash
-auth --change-password --dir ~/.auth
+cd "$directory" || exit 1
+
+if auth --check setup.profile; then
+    # shellcheck disable=SC1091
+    source setup.profile
+else
+    echo "setup.profile is not authorized or has changed" >&2
+    return 1 2>/dev/null || exit 1
+fi
 ```
 
-The recovery metadata includes an advisory machine identifier. If the database is copied to a different machine, the auth password may be required to restore the keys into that machine’s credential store.
+`--check` is intentionally read-only and does not require platform authorization, an Auth password, or a cached authorization session. It only verifies existing authorization records.
 
-### Burner password file
+## Security model
 
-When `auth` creates or rotates recovery material, it writes the generated burner passwords to:
+`auth` separates two ideas:
+
+1. **Authorization**: a trusted user approves a database-changing action such as `--write`, `--remove`, `--change-password`, `--show-dir`, or `--stats`.
+2. **Validation**: later checks verify that a file still matches its authorized state.
+
+Authorization records are stored in SQLite at `~/.auth/auth.db` by default. File path identities are stored as HMAC-SHA256 values, not plaintext paths and not plain path hashes. Content is stored as a SHA-256 digest and each record is protected with an Ed25519 signature.
+
+Normal-use key material is stored through a secret provider. The default provider is the platform keyring provider. Databases whose directory basename is exactly `auth-test` use file-backed keys and test password environment variables so CI and development tests remain non-interactive.
+
+Important limitations:
+
+- `auth` protects against using changed files after authorization.
+- It does not fully protect against malware already running as the same user.
+- A valid authorization cache can be used by any command run as the same user during the cache window.
+- SQLite is not encrypted; path privacy relies on keyed HMACs and protected local key material.
+
+## Storage layout
+
+Default per-user layout:
 
 ```text
-.auth/auth-burners.age
+~/.auth/
+  auth.db
+  auth-burners.age
+  ed25519.verifying-key
 ```
 
-This file is encrypted with the Auth password using the age file format. Decrypt it, then store the burner passwords somewhere durable, preferably a password manager.
+Normal private key material is stored outside the database by the selected secret provider. `auth-burners.age` contains one-time burner passwords encrypted with the Auth password using the age file format.
 
-Using `rage`:
+On Unix-like systems the auth directory is set to `0700`. Private test key files in `auth-test` databases are set to `0600`.
+
+## Auth password and burner passwords
+
+Normal databases can establish an Auth password and ten one-time burner passwords. The Auth password is stored as an Argon2id password hash. A backup copy of database key material is encrypted with a key derived from the Auth password.
+
+Burner passwords can authorize recovery operations exactly once. To avoid terminal scrollback exposure, generated burner passwords are written to an age-encrypted file instead of being printed directly:
+
+```text
+~/.auth/auth-burners.age
+```
+
+Decrypt it with `rage`, then save the burner passwords somewhere durable, preferably a password manager:
 
 ```bash
 cargo install rage
 rage -d ~/.auth/auth-burners.age > auth-burners.txt
 ```
 
-The `rage` crate is published at <https://crates.io/crates/rage>. If you forget the Auth password, this encrypted burner file will not help because it is protected by that same Auth password.
-
-## Security model
-
-`auth` separates two ideas:
-
-1. **Authorization**: a trusted user approves a database-changing action such as `--write` or `--remove`.
-2. **Validation**: later checks verify that a file still matches its authorized state.
-
-Authorization records are now stored in SQLite at `~/.auth/auth.db` by default. File paths are stored as `HMAC-SHA256(canonical_path, local_path_key)`, not plaintext and not a plain path hash. That avoids exposing sensitive filenames in the database and makes dictionary attacks much harder unless the local path-HMAC key is stolen.
-
-The database stores:
-
-- record version
-- tool version
-- creation/update timestamps
-- path HMAC
-- content SHA-256
-- file size
-- Ed25519 signature
+If you forget the Auth password, this encrypted burner file will not help because it is protected by that same Auth password.
 
 ## Supported platforms
 
 | Platform | Status | Authorization backend |
 |---|---:|---|
-| macOS Tahoe | test target | Touch ID / password fallback through LocalAuthentication helper |
-| Windows 11 | test target | Windows Hello through `UserConsentVerifier` |
-| Ubuntu 24.04 | test target | PAM through `sudo -v` fallback |
-| Other Linux | experimental | PAM through `sudo -v` fallback |
+| macOS | tested target | Touch ID / password fallback through LocalAuthentication helper |
+| Windows 11 | tested target | Windows Hello through `UserConsentVerifier` when available |
+| Ubuntu / WSL2 | tested target | Auth password fallback is the most reliable path |
+| Other Linux | experimental | Auth password fallback; platform-specific biometric/PAM support is future work |
 
-See `docs/platform-support.md` for details.
+See `docs/platform-support.md` for more detail.
 
-## CLI
+## CLI overview
 
 ```bash
 auth --help
@@ -81,6 +93,9 @@ auth --version
 auth --write  [OPTIONS] FILENAME...
 auth --check  [OPTIONS] FILENAME...
 auth --remove [OPTIONS] FILENAME...
+auth --change-password [OPTIONS]
+auth --show-dir [OPTIONS]
+auth --stats [OPTIONS]
 ```
 
 Examples:
@@ -91,13 +106,150 @@ auth --check important-script.sh
 auth --remove important-script.sh
 ```
 
-CI / non-interactive examples:
+`--check` does not require authorization. Protected commands such as `--write`, `--remove`, `--change-password`, `--show-dir`, and `--stats` require platform authorization, an Auth password, or a valid authorization cache depending on the selected options and platform.
+
+## Configuration
+
+`auth` reads configuration in this order:
+
+1. TOML config file
+2. `AUTH_OPTIONS`
+3. command-line arguments
+
+Later layers are appended after earlier layers, but duplicate-sensitive options such as root directives and secret provider selections are still enforced. For example, specifying both `--default-root` and `--root-dir=PATH` anywhere across config, `AUTH_OPTIONS`, and command line fails.
+
+By default, `auth` looks for:
+
+```text
+~/.authrc
+```
+
+Use a different config file:
 
 ```bash
-mkdir -p auth-test
-AUTH_OPTIONS="-d ./auth-test" AUTH_TEST_FALLBACK_PASSWORD="Long-Test-Password-2026!" AUTH_TEST_FALLBACK_PASSWORD_CONFIRM="Long-Test-Password-2026!" AUTH_TEST_CURRENT_PASSWORD_OR_BURNER="Long-Test-Password-2026!" auth --write important-script.sh
-auth --dir ./auth-test --check important-script.sh
+auth --config=/path/to/auth.toml --check file.txt
 ```
+
+Disable config loading for one command:
+
+```bash
+auth --config= --write ~/.authrc
+```
+
+That is useful when authorizing or repairing the config file itself. `AUTH_CONFIG_DISABLE=1` is also still supported for tests and emergency troubleshooting, but `--config=` is the preferred user-facing spelling.
+
+### TOML config format
+
+Example:
+
+```toml
+# ~/.authrc
+options = [
+  "--default-root",
+  "--secret-provider=1password",
+]
+
+dir = "/Users/me/.auth"
+color = "auto"
+cache_time = 60
+request_password = false
+```
+
+Supported structured keys:
+
+| Key | Type | Meaning |
+|---|---|---|
+| `options` or `AUTH_OPTIONS` | string or array of strings | Extra auth options parsed before environment and command-line options |
+| `cache_time` | integer | Authorization cache duration, 0 to 120 seconds |
+| `color` | string | `auto`, `always`, or `never` |
+| `default_root` | boolean | Use normal full-path identity |
+| `dir` or `db_dir` | string | Auth database directory |
+| `force` | boolean | Reserved for future non-security confirmation prompts |
+| `quiet` | boolean | Report failures only |
+| `request_password` | boolean | Prefer Auth password / burner authorization |
+| `root_dir` | string | Use root-relative file identity |
+| `secret_provider` | string | `prompt`, `env`, `os-keyring`, `1password`, or `bitwarden` |
+| `silent` | boolean | Suppress routine output |
+| `verbose` | boolean or integer | Increase verbosity; negative integer selects silent |
+
+Supported test/helper environment variables in the TOML file:
+
+```toml
+AUTH_TEST_FALLBACK_PASSWORD = "Long-Test-Password-2026!"
+AUTH_TEST_FALLBACK_PASSWORD_CONFIRM = "Long-Test-Password-2026!"
+AUTH_TEST_CURRENT_PASSWORD_OR_BURNER = "Long-Test-Password-2026!"
+AUTH_MACOS_TOUCHID_HELPER = "/path/to/auth-macos-touchid"
+```
+
+The process environment can also supply `AUTH_OPTIONS`, `AUTH_CONFIG_DISABLE`, `NO_COLOR`, `NOCOLOR`, and `PAGER`.
+
+The `AUTH_TEST_*` variables are honored only for databases whose basename is exactly `auth-test`.
+
+## Root-relative file identity
+
+By default, `auth` uses full canonical file paths when computing file identity. Use `--root-dir=PATH` when a set of files should be authorized relative to a canonical root directory instead:
+
+```bash
+auth --request-password --root-dir=/path/to/tree --write /path/to/tree/bin/tool
+auth --root-dir=/other/copy/of/tree --check /other/copy/of/tree/bin/tool
+```
+
+Use `--default-root` to explicitly select default full-path identity.
+
+At most one root directive may appear across the config file, `AUTH_OPTIONS`, and command-line arguments. Root directives are:
+
+```text
+--default-root
+--root-dir=PATH
+```
+
+A second root directive fails with:
+
+```text
+Error: Attempt to specify root directory more than once.
+```
+
+## Secret providers
+
+Supported provider names and aliases:
+
+| Provider | Aliases |
+|---|---|
+| `prompt` | |
+| `env` | `environment` |
+| `os-keyring` | `keyring`, `keys`, `oskeyring` |
+| `1password` | `1p`, `1pw` |
+| `bitwarden` | `bw` |
+
+Current 1Password support reads provider secrets with the 1Password CLI using:
+
+```text
+op://Private/<name>/password
+```
+
+where `<name>` is the internal secret name requested by `auth`.
+
+## Authorization cache
+
+`--cache-time=SECONDS` caches a successful protected authorization for the selected database for up to 120 seconds. The default is `0`, meaning successful authorization does not create or refresh a cache entry.
+
+A later protected command always checks for an existing unexpired cache first, even if that later command does not repeat `--cache-time`.
+
+The cache entry is MAC-protected and tied to the database namespace and current machine hash. Tampered, expired, or machine-mismatched cache records are ignored and cleared.
+
+## Color output
+
+```bash
+auth --color=auto   ...
+auth --color=always ...
+auth --color=never  ...
+```
+
+Errors are red, warnings are yellow, and passing/positive messages are green when color is enabled. `NO_COLOR` and `NOCOLOR` disable automatic color output. `--color=always` overrides those variables.
+
+## Paged help
+
+`auth --help` uses `$PAGER` when stdout is interactive. If `$PAGER` is unset, it tries `less -R`, then `more`, and finally falls back to plain stdout. In non-interactive contexts such as tests or pipes, help is printed directly.
 
 ## Library API
 
@@ -127,38 +279,30 @@ pub fn auth_report(
 cargo build --release
 ```
 
-## macOS Touch ID helper
+On macOS, `build.rs` compiles `platform/macos/auth-macos-touchid.swift` into Cargo's `OUT_DIR` and embeds that helper path into the Rust binary. Runtime lookup order is:
 
-Build and install the helper:
-
-```bash
-swiftc platform/macos/auth-macos-touchid.swift -o auth-macos-touchid
-install -m 0755 auth-macos-touchid /usr/local/bin/auth-macos-touchid
-```
-
-`auth` itself has no GUI. The helper asks macOS to show the normal LocalAuthentication prompt.
+1. `AUTH_MACOS_TOUCHID_HELPER`
+2. helper compiled by `build.rs`
+3. helper installed beside the `auth` executable
+4. `auth-macos-touchid` found on `PATH`
 
 ## Tests
 
 ```bash
-cargo test --all-features
-cargo test --test cli
+gmake verify
+gmake tests-all
 ```
+
+`tests.mk` contains randomized manual/system tests that should stand on their own after `tests-clear` and `tests-setup`.
 
 ## Security checks and SBOM
 
 ```bash
-cargo install cargo-audit cargo-cyclonedx cargo-deny
-cargo audit
-cargo deny check advisories bans licenses sources
-cargo cyclonedx --format json --output-file sbom.cdx.json
+gmake audit
+gmake sbom
 ```
 
-Or run:
-
-```bash
-scripts/security-checks.sh
-```
+Generated audit/SBOM output belongs under `artifacts/`.
 
 ## Packaging
 
@@ -172,140 +316,3 @@ See `docs/publishing-checklist.md` before publishing.
 ## License
 
 Apache-2.0. See `LICENSE` and `NOTICE`.
-
-
-## macOS Touch ID helper build
-
-On macOS, `build.rs` compiles `platform/macos/auth-macos-touchid.swift` into Cargo's `OUT_DIR` and embeds that helper path into the Rust binary. The runtime lookup order is:
-
-1. `AUTH_MACOS_TOUCHID_HELPER` environment variable
-2. helper compiled by `build.rs`
-3. helper installed beside the `auth` executable
-4. `auth-macos-touchid` found on `PATH`
-
-For development and CI, use an `auth-test` database plus the test-only `AUTH_TEST_*` password environment variables.
-
-## Integration tests
-
-Run:
-
-```bash
-cargo test --all-targets --all-features
-```
-
-The CLI integration tests cover help/version output, writing authorization for two files, checking authorized/unauthorized/missing files, removing one authorization record, and detecting content changes.
-
-
-## Test-only authorization bypass
-
-`--no-platform-auth` has been removed from the CLI. Tests should use an `auth-test` database and the test-only `AUTH_TEST_*` password environment variables instead.
-
-Example:
-
-```bash
-echo "Hello World" > TESTFILE.txt
-mkdir -p auth-test
-export AUTH_OPTIONS="-d ./auth-test"
-export AUTH_TEST_FALLBACK_PASSWORD="Long-Test-Password-2026!"
-export AUTH_TEST_FALLBACK_PASSWORD_CONFIRM="Long-Test-Password-2026!"
-export AUTH_TEST_CURRENT_PASSWORD_OR_BURNER="Long-Test-Password-2026!"
-auth --write TESTFILE.txt
-```
-
-These `AUTH_TEST_*` variables are honored only for databases whose basename is exactly `auth-test`.
-
-## AUTH_OPTIONS
-
-`AUTH_OPTIONS` is parsed before command-line arguments. It is intended for common options such as a test database directory:
-
-```bash
-export AUTH_OPTIONS="-d ./auth-test --color auto"
-```
-
-Command-line options are processed after `AUTH_OPTIONS`, so they can extend or override the initial options.
-
-## Color output
-
-Use:
-
-```bash
-auth --color auto   ...
-auth --color always ...
-auth --color never  ...
-```
-
-Errors are red, warnings are yellow, and passing/positive messages are green when color is enabled. `NO_COLOR` and `NOCOLOR` disable automatic color output. `--color always` overrides those variables.
-
-## Paged help
-
-`auth --help` uses `$PAGER` when stdout is interactive. If `$PAGER` is unset, it tries `less -R`, then `more`, and finally falls back to plain stdout. In non-interactive contexts such as tests or pipes, help is printed directly.
-
-
-## SQLite storage with platform credential-store keys in v0.7.0
-
-Version 0.7.0 is the first SQLite-backed implementation. The older v0.5.0 line is the last directory/file-record implementation. The default storage layout is:
-
-```text
-~/.auth/
-  auth.db
-  ed25519.signing-key
-  ed25519.verifying-key
-  path-hmac.key
-```
-
-On Unix-like systems the directory is set to `0700`, and private files are set to `0600`. Windows ACL tightening is still future work. SQLite is not encrypted in this release; privacy comes from path HMACs, content hashes, and signed records.
-
-
-## v0.7.0 security changes
-
-Version 0.7.0 is a clean break from the v0.5.0 directory/file record format. It does not import legacy flat-file authorization records.
-
-Normal-use key material is now stored in the platform credential store using the Rust `keyring` crate. On macOS this maps to Keychain, on Windows to the Windows Credential Manager, and on Linux to a Secret Service-compatible backend when available. Test databases whose directory basename is exactly `auth-test` still use local file-backed keys so CI and development tests remain non-interactive.
-
-The `--no-platform-auth` option has been removed from the CLI; fallback-password recovery replaces that bypass.
-
-
-### Authorization cache
-
-`--cache-time=SECONDS` caches a successful platform/fallback authorization for the selected database for up to 120 seconds. The default is `0`, which means a successful authorization does not create or refresh the cache. A later protected command always checks for an existing unexpired cache first, even when that later command does not specify `--cache-time`.
-
-The cache entry is MAC-protected and tied to the current machine hash and database namespace. Tampered, expired, or machine-mismatched cache records are ignored and cleared.
-
-
-## v0.8.4 CLI additions
-
-Options in help are alphabetized. `--cache-time` now requires equals syntax, for example `--cache-time=60`, and remains limited to 120 seconds.
-
-`--request-password` forces the Auth password / burner route instead of platform authorization. This is useful for CI, WSL, and systems where the platform prompt is unavailable. It is not a bypass; a valid Auth password or unused burner password is still required.
-
-`--show-dir` displays the absolute auth directory and database path after authorization.
-
-`--stats` displays the number of authorized file entries, the most recent successful write, and the most recent successful check after authorization.
-
-### Root-relative path identity
-
-Use `--default-root` to explicitly select the normal full-path identity behavior. Use `--root-dir=PATH` when a set of files should be authorized by their path relative to a canonical root directory rather than by their full absolute path. This is useful for packaged or copied trees where the same relative file layout may live under different parent directories.
-
-```bash
-auth --request-password --root-dir=/path/to/tree --write /path/to/tree/bin/tool
-auth --root-dir=/other/copy/of/tree --check /other/copy/of/tree/bin/tool
-```
-
-`--root-dir=PATH` and `--default-root` are root directives. At most one root directive may appear across `AUTH_OPTIONS` and command-line arguments. A second root directive fails with `Error: Attempt to specify root directory more than once.`
-
-
-## Secret Providers
-
-Supported providers:
-
-- prompt (default)
-- env
-- os-keyring
-- 1password
-- bitwarden
-
-Example:
-
-```bash
-auth --secret-provider=prompt --write file.txt
-```
