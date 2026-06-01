@@ -1,3 +1,11 @@
+## 0.9.0
+
+- Changed auth configuration files from shell-style `VAR=VALUE` lines to TOML.
+- Added TOML `options = [...]` support for auth options that are applied before `AUTH_OPTIONS` and command-line arguments.
+- Added `--config=` support to disable default configuration loading for a single invocation.
+- Added `toml` dependency for structured config parsing.
+- Updated config-file tests for TOML syntax.
+
 ## 0.8.10c
 
 - Added `--config=FILE` support for auth configuration files.

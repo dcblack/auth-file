@@ -35,17 +35,17 @@ Options
   --cache-time=SECONDS       Cache successful authorization for 0-120 seconds [default: 0]
   --change-password          Change auth password using current password or burner[^2]
   --check, -ck               Verify specified files are valid
-  --color WHEN               Color output: auto, always, never [default: auto]
-  --config=FILE              Read auth configuration from FILE [default: ~/.authrc]
+  --color=WHEN              Color output: auto, always, never [default: auto]
+  --config=FILE              Read TOML configuration from FILE [default: ~/.authrc]
   --default-root             Use default full-path file identity
-  --dir DIR, -d DIR          Specify database directory [default: ~/.auth]
+  --dir=DIR, -d DIR          Specify database directory [default: ~/.auth]
   --force, -f                Reserved for future non-security confirmation prompts
   --help, -h                 Display this text using a pager when interactive
   --quiet, -q                Report failures only
   --remove, -rm              Remove authorization[^1]
   --request-password         Require Auth password/burner instead of platform authorization
   --root-dir=PATH            Store/check paths relative to this canonical root
-  --secret-provider PROVIDER Secret provider: prompt, env, os-keyring, 1password, bitwarden
+  --secret-provider=PROVIDER Secret provider: prompt, env, os-keyring, 1password, bitwarden
   --show-dir                 Display auth storage paths[^2]
   --silent, -s               Silent even with failure, useful in scripts
   --stats                    Display database statistics[^2]
@@ -60,8 +60,8 @@ Options
 Environment
 -----------
 
-  AUTH_OPTIONS               Initial options parsed before command-line arguments.
-                             Example: export AUTH_OPTIONS="-d ./auth-test"
+  AUTH_OPTIONS               Initial options parsed after config and before command-line arguments.
+                             Example: export AUTH_OPTIONS="--dir=./auth-test"
 
   NO_COLOR, NOCOLOR          Disable colored output unless --color always is given.
 
@@ -72,7 +72,7 @@ Compatibility
 -------------
 
   Options may appear between filenames, allowing a mix of actions in one call.
-  AUTH_OPTIONS is processed first, then command-line arguments override or extend it.
+  Configuration is processed first, then AUTH_OPTIONS, then command-line arguments.
 
   Example:
 
@@ -183,6 +183,12 @@ fn parse_one_arg(args: &[String], i: &mut usize, state: &mut CliState) -> Result
         "-wr" | "--write" => switch_action(state, ActionType::Write),
         "-rm" | "--remove" => switch_action(state, ActionType::Remove),
         "--change-password" => set_mode(state, CommandMode::ChangePassword)?,
+        unknown if unknown.starts_with("--color=") => {
+            let Some((_, mode)) = unknown.split_once('=') else {
+                return Err("--color requires --color=WHEN syntax".to_string());
+            };
+            state.options.color = parse_color_mode(mode)?;
+        }
         "--color" => {
             *i += 1;
             let mode = args
@@ -196,7 +202,20 @@ fn parse_one_arg(args: &[String], i: &mut usize, state: &mut CliState) -> Result
             note_root_directive(state)?;
             state.options.root_dir = None;
         }
-        "-d" | "--dir" => {
+        "-d" => {
+            *i += 1;
+            let dir = args
+                .get(*i)
+                .ok_or_else(|| "missing directory after -d".to_string())?;
+            state.options.db_dir = PathBuf::from(dir);
+        }
+        unknown if unknown.starts_with("--dir=") => {
+            let Some((_, dir)) = unknown.split_once('=') else {
+                return Err("--dir requires --dir=DIR syntax".to_string());
+            };
+            state.options.db_dir = PathBuf::from(dir);
+        }
+        "--dir" => {
             *i += 1;
             let dir = args
                 .get(*i)
@@ -422,18 +441,32 @@ fn load_config_args(cli_args: &[String], env_args: &[String]) -> Result<ConfigAr
 }
 
 fn config_path(cli_args: &[String], env_args: &[String]) -> Option<PathBuf> {
-    explicit_config_path(cli_args)
-        .or_else(|| explicit_config_path(env_args))
-        .or_else(default_config_path)
+    if config_disabled(cli_args) {
+        return None;
+    }
+    if let Some(path) = explicit_config_path(cli_args) {
+        return Some(path);
+    }
+    if config_disabled(env_args) {
+        return None;
+    }
+    explicit_config_path(env_args).or_else(default_config_path)
+}
+
+fn config_disabled(args: &[String]) -> bool {
+    args.iter().any(|arg| arg == "--config=")
 }
 
 fn explicit_config_path(args: &[String]) -> Option<PathBuf> {
     args.iter()
-        .find_map(|arg| arg.strip_prefix("--config=").map(PathBuf::from))
+        .filter_map(|arg| arg.strip_prefix("--config="))
+        .find(|path| !path.is_empty())
+        .map(PathBuf::from)
 }
 
 fn explicit_config_requested(args: &[String]) -> bool {
-    args.iter().any(|arg| arg.starts_with("--config="))
+    args.iter()
+        .any(|arg| arg.starts_with("--config=") && arg != "--config=")
 }
 
 fn default_config_path() -> Option<PathBuf> {
@@ -443,47 +476,64 @@ fn default_config_path() -> Option<PathBuf> {
 fn read_config_file(path: &Path) -> Result<ConfigArgs, String> {
     let text = std::fs::read_to_string(path)
         .map_err(|e| format!("failed to read configuration file {}: {e}", path.display()))?;
+    let value: toml::Value = text.parse().map_err(|e| {
+        format!(
+            "failed to parse TOML configuration file {}: {e}",
+            path.display()
+        )
+    })?;
+    let Some(table) = value.as_table() else {
+        return Err(format!(
+            "invalid configuration file {}: expected TOML table",
+            path.display()
+        ));
+    };
 
     let mut args = Vec::new();
     let mut variables = Vec::new();
 
-    for (line_index, raw_line) in text.lines().enumerate() {
-        let line = strip_config_comment(raw_line).trim().to_string();
-        if line.is_empty() {
-            continue;
-        }
-
-        let Some((name, value)) = line.split_once('=') else {
-            return Err(format!(
-                "invalid configuration line {}: expected NAME=VALUE",
-                line_index + 1
-            ));
-        };
-
-        let name = name.trim();
-        let value = parse_config_value(value.trim()).map_err(|e| {
-            format!(
-                "invalid configuration line {} for {name}: {e}",
-                line_index + 1
-            )
-        })?;
-
-        match name {
-            "AUTH_OPTIONS" => args.extend(split_auth_options(&value)?),
+    for (name, value) in table {
+        match name.as_str() {
+            "options" | "AUTH_OPTIONS" => extend_config_options(name, value, &mut args)?,
             "AUTH_TEST_FALLBACK_PASSWORD"
             | "AUTH_TEST_FALLBACK_PASSWORD_CONFIRM"
             | "AUTH_TEST_CURRENT_PASSWORD_OR_BURNER"
-            | "AUTH_MACOS_TOUCHID_HELPER" => variables.push((name.to_string(), value)),
-            other => {
-                return Err(format!(
-                    "unsupported configuration variable {other} on line {}",
-                    line_index + 1
-                ));
+            | "AUTH_MACOS_TOUCHID_HELPER" => {
+                let Some(value) = value.as_str() else {
+                    return Err(format!("configuration key {name} must be a string"));
+                };
+                variables.push((name.clone(), value.to_string()));
             }
+            other => return Err(format!("unsupported configuration key {other}")),
         }
     }
 
     Ok(ConfigArgs { args, variables })
+}
+
+fn extend_config_options(
+    name: &str,
+    value: &toml::Value,
+    args: &mut Vec<String>,
+) -> Result<(), String> {
+    if let Some(value) = value.as_str() {
+        args.extend(split_auth_options(value)?);
+        return Ok(());
+    }
+    let Some(values) = value.as_array() else {
+        return Err(format!(
+            "configuration key {name} must be a string or array of strings"
+        ));
+    };
+    for value in values {
+        let Some(option) = value.as_str() else {
+            return Err(format!(
+                "configuration key {name} must contain only strings"
+            ));
+        };
+        args.extend(split_auth_options(option)?);
+    }
+    Ok(())
 }
 
 fn apply_config_environment(variables: &[(String, String)]) {
@@ -491,48 +541,6 @@ fn apply_config_environment(variables: &[(String, String)]) {
         if env::var_os(name).is_none() {
             env::set_var(name, value);
         }
-    }
-}
-
-fn strip_config_comment(line: &str) -> String {
-    let mut out = String::new();
-    let mut quote: Option<char> = None;
-    let mut chars = line.chars().peekable();
-
-    while let Some(ch) = chars.next() {
-        match (quote, ch) {
-            (None, '#') => break,
-            (None, '\'' | '"') => {
-                quote = Some(ch);
-                out.push(ch);
-            }
-            (Some(q), c) if c == q => {
-                quote = None;
-                out.push(c);
-            }
-            (Some(_), '\\') => {
-                out.push(ch);
-                if let Some(next) = chars.next() {
-                    out.push(next);
-                }
-            }
-            (_, c) => out.push(c),
-        }
-    }
-
-    out
-}
-
-fn parse_config_value(value: &str) -> Result<String, String> {
-    if value.is_empty() {
-        return Ok(String::new());
-    }
-
-    let parsed = split_auth_options(value)?;
-    match parsed.as_slice() {
-        [] => Ok(String::new()),
-        [single] => Ok(single.clone()),
-        _ => Ok(value.to_string()),
     }
 }
 

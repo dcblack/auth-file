@@ -82,7 +82,7 @@ fn config_file_can_supply_auth_options() {
     let config = tmp.path().join("authrc");
     let file = tmp.path().join("configured.txt");
     fs::write(&file, "configured contents\n").unwrap();
-    fs::write(&config, format!("AUTH_OPTIONS=-d {}\n", db.display())).unwrap();
+    fs::write(&config, format!("options = ['--dir={}']\n", db.display())).unwrap();
 
     let mut write = auth_cmd();
     write
@@ -114,7 +114,7 @@ fn config_file_ignores_comments_and_accepts_quoted_values() {
     fs::write(
         &config,
         format!(
-            "\n  # comments are ignored\nAUTH_OPTIONS='-d {} --default-root' # inline comments are ignored\n",
+            "\n# comments are native TOML comments\noptions = ['--dir={}', \"--default-root\"]\n",
             db.display()
         ),
     )
@@ -134,7 +134,7 @@ fn config_file_ignores_comments_and_accepts_quoted_values() {
 fn config_file_rejects_unknown_variables() {
     let tmp = tempdir().unwrap();
     let config = tmp.path().join("authrc");
-    fs::write(&config, "PATH=/tmp\n").unwrap();
+    fs::write(&config, "PATH = \"/tmp\"\n").unwrap();
 
     let mut cmd = auth_cmd();
     cmd.env_remove("AUTH_CONFIG_DISABLE")
@@ -143,7 +143,7 @@ fn config_file_rejects_unknown_variables() {
         .assert()
         .failure()
         .stderr(predicate::str::contains(
-            "unsupported configuration variable PATH",
+            "unsupported configuration key PATH",
         ));
 }
 
@@ -168,7 +168,7 @@ fn auth_options_config_file_can_redirect_config() {
     let config = tmp.path().join("authrc");
     let file = tmp.path().join("env-config.txt");
     fs::write(&file, "env config contents\n").unwrap();
-    fs::write(&config, format!("AUTH_OPTIONS=-d {}\n", db.display())).unwrap();
+    fs::write(&config, format!("options = ['--dir={}']\n", db.display())).unwrap();
 
     let mut cmd = auth_cmd();
     cmd.env_remove("AUTH_CONFIG_DISABLE")

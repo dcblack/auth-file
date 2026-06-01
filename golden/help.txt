@@ -21,17 +21,17 @@ Options
   --cache-time=SECONDS       Cache successful authorization for 0-120 seconds [default: 0]
   --change-password          Change auth password using current password or burner[^2]
   --check, -ck               Verify specified files are valid
-  --color WHEN               Color output: auto, always, never [default: auto]
-  --config=FILE              Read auth configuration from FILE [default: ~/.authrc]
+  --color=WHEN              Color output: auto, always, never [default: auto]
+  --config=FILE              Read TOML configuration from FILE [default: ~/.authrc]
   --default-root             Use default full-path file identity
-  --dir DIR, -d DIR          Specify database directory [default: ~/.auth]
+  --dir=DIR, -d DIR          Specify database directory [default: ~/.auth]
   --force, -f                Reserved for future non-security confirmation prompts
   --help, -h                 Display this text using a pager when interactive
   --quiet, -q                Report failures only
   --remove, -rm              Remove authorization[^1]
   --request-password         Require Auth password/burner instead of platform authorization
   --root-dir=PATH            Store/check paths relative to this canonical root
-  --secret-provider PROVIDER Secret provider: prompt, env, os-keyring, 1password, bitwarden
+  --secret-provider=PROVIDER Secret provider: prompt, env, os-keyring, 1password, bitwarden
   --show-dir                 Display auth storage paths[^2]
   --silent, -s               Silent even with failure, useful in scripts
   --stats                    Display database statistics[^2]
@@ -46,8 +46,8 @@ Options
 Environment
 -----------
 
-  AUTH_OPTIONS               Initial options parsed before command-line arguments.
-                             Example: export AUTH_OPTIONS="-d ./auth-test"
+  AUTH_OPTIONS               Initial options parsed after config and before command-line arguments.
+                             Example: export AUTH_OPTIONS="--dir=./auth-test"
 
   NO_COLOR, NOCOLOR          Disable colored output unless --color always is given.
 
@@ -58,7 +58,7 @@ Compatibility
 -------------
 
   Options may appear between filenames, allowing a mix of actions in one call.
-  AUTH_OPTIONS is processed first, then command-line arguments override or extend it.
+  Configuration is processed first, then AUTH_OPTIONS, then command-line arguments.
 
   Example:
 
