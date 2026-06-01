@@ -878,6 +878,7 @@ fn check_with_cache_time_does_not_request_password() {
 
     Command::cargo_bin("auth")
         .unwrap()
+        .env("AUTH_CONFIG_DISABLE", "1")
         .env("AUTH_OPTIONS", format!("-d {}", db.display()))
         .env_remove("AUTH_TEST_CURRENT_PASSWORD_OR_BURNER")
         .env_remove("AUTH_TEST_FALLBACK_PASSWORD")
@@ -914,6 +915,7 @@ fn check_with_request_password_does_not_request_password() {
 
     Command::cargo_bin("auth")
         .unwrap()
+        .env("AUTH_CONFIG_DISABLE", "1")
         .env("AUTH_OPTIONS", format!("-d {}", db.display()))
         .env_remove("AUTH_TEST_CURRENT_PASSWORD_OR_BURNER")
         .env_remove("AUTH_TEST_FALLBACK_PASSWORD")
