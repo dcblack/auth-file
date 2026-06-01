@@ -114,6 +114,7 @@ pub struct AuthOptions {
     pub cache_seconds: u64,
     pub root_dir: Option<PathBuf>,
     pub secret_provider: SecretProvider,
+    pub secret_ref: Option<String>,
 }
 
 impl Default for AuthOptions {
@@ -128,6 +129,7 @@ impl Default for AuthOptions {
             cache_seconds: 0,
             root_dir: None,
             secret_provider: SecretProvider::OsKeyring,
+            secret_ref: None,
         }
     }
 }
@@ -295,6 +297,7 @@ pub fn auth_report(
         &conn,
         allow_key_create,
         options.secret_provider,
+        options.secret_ref.as_deref(),
     )?;
 
     if matches!(action, ActionType::Write | ActionType::Remove) {
@@ -447,6 +450,7 @@ impl DbKeys {
         conn: &Connection,
         allow_create: bool,
         provider: SecretProvider,
+        secret_ref: Option<&str>,
     ) -> Result<Self, AuthError> {
         if is_test_database_dir(db_dir) {
             return Self::load_or_create_test_files(db_dir, allow_create);
@@ -473,7 +477,7 @@ impl DbKeys {
             }
             SecretProvider::Prompt => Self::load_or_create_prompt(db_dir, conn, allow_create),
             SecretProvider::Env | SecretProvider::OnePassword | SecretProvider::Bitwarden => {
-                Self::load_from_external_provider(db_dir, provider)
+                Self::load_from_external_provider(db_dir, provider, secret_ref)
             }
         }
     }
@@ -540,20 +544,23 @@ impl DbKeys {
     fn load_from_external_provider(
         db_dir: &Path,
         provider: SecretProvider,
+        secret_ref: Option<&str>,
     ) -> Result<Self, AuthError> {
         let namespace = key_namespace(db_dir);
         let signing_name = format!("{namespace}:ed25519-signing");
         let path_name = format!("{namespace}:path-hmac");
-        let signing = get_secret_from_provider(provider, &signing_name)?.ok_or_else(|| {
-            AuthError::KeyStorage(format!(
-                "secret provider did not return secret: {signing_name}"
-            ))
-        })?;
-        let path_hmac = get_secret_from_provider(provider, &path_name)?.ok_or_else(|| {
-            AuthError::KeyStorage(format!(
-                "secret provider did not return secret: {path_name}"
-            ))
-        })?;
+        let signing =
+            get_secret_from_provider(provider, &signing_name, secret_ref)?.ok_or_else(|| {
+                AuthError::KeyStorage(format!(
+                    "secret provider did not return secret: {signing_name}"
+                ))
+            })?;
+        let path_hmac =
+            get_secret_from_provider(provider, &path_name, secret_ref)?.ok_or_else(|| {
+                AuthError::KeyStorage(format!(
+                    "secret provider did not return secret: {path_name}"
+                ))
+            })?;
         let keys = Self::from_key_material(signing, path_hmac)?;
         write_public_file(
             &db_dir.join(PUBKEY_FILE),
@@ -667,7 +674,13 @@ impl DbKeys {
 pub fn change_fallback_password(options: &AuthOptions) -> Result<AuthPasswordUpdate, AuthError> {
     ensure_storage(&options.db_dir)?;
     let conn = open_database(&options.db_dir)?;
-    let keys = DbKeys::load_or_create(&options.db_dir, &conn, false, options.secret_provider)?;
+    let keys = DbKeys::load_or_create(
+        &options.db_dir,
+        &conn,
+        false,
+        options.secret_provider,
+        options.secret_ref.as_deref(),
+    )?;
     authenticate_with_fallback_or_burner(&conn, &options.db_dir)?;
     configure_recovery_password(&conn, &options.db_dir, &keys, true)
 }
@@ -715,6 +728,7 @@ fn prepare_database_for_protected_command(
         &conn,
         allow_key_create,
         options.secret_provider,
+        options.secret_ref.as_deref(),
     )?;
     ensure_recovery_initialized(&conn, &options.db_dir, &keys)?;
     Ok((conn, keys))
@@ -1652,9 +1666,25 @@ fn is_wsl_environment() -> bool {
     false
 }
 
+fn provider_secret_reference(
+    secret_ref: Option<&str>,
+    name: &str,
+    default_ref: impl FnOnce(&str) -> String,
+) -> String {
+    let Some(reference) = secret_ref else {
+        return default_ref(name);
+    };
+    if reference.contains("{name}") {
+        reference.replace("{name}", name)
+    } else {
+        reference.to_string()
+    }
+}
+
 fn get_secret_from_provider(
     provider: SecretProvider,
     name: &str,
+    secret_ref: Option<&str>,
 ) -> Result<Option<Vec<u8>>, AuthError> {
     match provider {
         SecretProvider::Prompt | SecretProvider::OsKeyring => Ok(None),
@@ -1668,9 +1698,12 @@ fn get_secret_from_provider(
             decode_provider_secret(name, value.as_bytes()).map(Some)
         }
         SecretProvider::OnePassword => {
+            let reference = provider_secret_reference(secret_ref, name, |n| {
+                format!("op://Private/{n}/password")
+            });
             let output = std::process::Command::new("op")
                 .arg("read")
-                .arg(format!("op://Private/{name}/password"))
+                .arg(reference)
                 .output()
                 .map_err(|e| AuthError::KeyStorage(format!("failed to execute op: {e}")))?;
             if !output.status.success() {
@@ -1686,10 +1719,11 @@ fn get_secret_from_provider(
                     "Bitwarden provider requires BW_SESSION; run `bw unlock` and export the session key".to_string(),
                 ));
             }
+            let reference = provider_secret_reference(secret_ref, name, ToString::to_string);
             let output = std::process::Command::new("bw")
                 .arg("get")
                 .arg("password")
-                .arg(name)
+                .arg(reference)
                 .output()
                 .map_err(|e| AuthError::KeyStorage(format!("failed to execute bw: {e}")))?;
             if !output.status.success() {
@@ -1708,7 +1742,7 @@ fn get_or_create_secret(
     allow_create: bool,
     generate: impl FnOnce() -> Vec<u8>,
 ) -> Result<Vec<u8>, AuthError> {
-    if let Some(secret) = get_secret_from_provider(provider, name)? {
+    if let Some(secret) = get_secret_from_provider(provider, name, None)? {
         return Ok(secret);
     }
 
@@ -2070,6 +2104,7 @@ mod tests {
             cache_seconds: 0,
             root_dir: None,
             secret_provider: SecretProvider::Prompt,
+            secret_ref: None,
         }
     }
 
@@ -2283,7 +2318,8 @@ mod tests {
         let db = tmp.path().join("auth-test");
         fs::create_dir_all(&db).unwrap();
         let conn = open_database(&db).unwrap();
-        let keys = DbKeys::load_or_create(&db, &conn, true, SecretProvider::OsKeyring).unwrap();
+        let keys =
+            DbKeys::load_or_create(&db, &conn, true, SecretProvider::OsKeyring, None).unwrap();
         configure_recovery_password_with_password(&conn, &db, &keys, "Long-Test-Password-2026!")
             .unwrap();
         let burner = "Burner-Test-2026!";

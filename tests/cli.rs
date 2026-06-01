@@ -1064,6 +1064,54 @@ fn secret_provider_aliases_parse() {
 }
 
 #[test]
+fn secret_ref_option_parses() {
+    let tmp = tempdir().unwrap();
+    let db = tmp.path().join("auth-test");
+    let file = tmp.path().join("untrusted.txt");
+    fs::write(&file, "not authorized yet\n").unwrap();
+
+    auth_cmd()
+        .timeout(Duration::from_secs(10))
+        .arg("--secret-provider=prompt")
+        .arg("--secret-ref=op://Private/auth-file/{name}")
+        .arg("--dir")
+        .arg(path_str(&db))
+        .arg("--check")
+        .arg(path_str(&file))
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("unsupported configuration key secret_ref").not());
+}
+
+#[test]
+fn config_file_accepts_secret_ref() {
+    let tmp = tempdir().unwrap();
+    let db = tmp.path().join("auth-test");
+    let config = tmp.path().join("authrc");
+    let file = tmp.path().join("untrusted.txt");
+    fs::write(&file, "not authorized yet\n").unwrap();
+
+    fs::write(
+        &config,
+        format!(
+            "dir = \"{}\"\nsecret_provider = \"prompt\"\nsecret_ref = \"op://Private/auth-file/{{name}}\"\n",
+            path_str(&db)
+        ),
+    )
+    .unwrap();
+
+    let mut cmd = auth_cmd();
+    cmd.env_remove("AUTH_CONFIG_DISABLE")
+        .timeout(Duration::from_secs(10))
+        .arg(format!("--config={}", path_str(&config)))
+        .arg("--check")
+        .arg(path_str(&file))
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("unsupported configuration key secret_ref").not());
+}
+
+#[test]
 fn duplicate_secret_provider_fails() {
     let mut cmd = auth_cmd();
     cmd.timeout(Duration::from_secs(10))

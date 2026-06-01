@@ -51,6 +51,7 @@ Options
   --request-password         Prefer Auth password/burner instead of platform authorization
   --root-dir=PATH            Store/check paths relative to this canonical root
   --secret-provider=PROVIDER Secret provider: prompt, env, os-keyring, 1password, bitwarden
+  --secret-ref=REF          Provider-specific secret reference, such as op://VAULT/ITEM/FIELD
   --show-dir                 Display auth storage paths[^2]
   --silent, -s               Silent even with failure, useful in scripts
   --stats                    Display database statistics[^2]
@@ -89,7 +90,7 @@ Configuration
   Supported structured TOML keys:
 
     options, AUTH_OPTIONS, cache_time, color, default_root, dir, db_dir,
-    force, quiet, request_password, root_dir, secret_provider, silent, verbose
+    force, quiet, request_password, root_dir, secret_provider, secret_ref, silent, verbose
 
   Supported config/environment variables:
 
@@ -141,6 +142,7 @@ Examples
     auth --write a.txt b.txt
     auth --check a.txt b.txt
     auth --request-password --cache-time=60 --root-dir=. --write a.txt b.txt
+    auth --secret-provider=1p --secret-ref="op://Private/auth-file/{name}" --write a.txt
     auth --default-root --check setup.profile
 
 Exit Status
@@ -161,6 +163,7 @@ enum CommandMode {
 
 const ROOT_SPECIFIED_MORE_THAN_ONCE: &str = "Attempt to specify root directory more than once.";
 const SECRET_PROVIDER_MORE_THAN_ONCE: &str = "Attempt to specify secret provider more than once.";
+const SECRET_REF_MORE_THAN_ONCE: &str = "Attempt to specify secret reference more than once.";
 const DEFAULT_CONFIG_FILE: &str = ".authrc";
 const DISABLE_CONFIG_ENV: &str = "AUTH_CONFIG_DISABLE";
 
@@ -220,8 +223,14 @@ struct CliState {
     overall_ok: bool,
     current_files: Vec<String>,
     mode: CommandMode,
+    seen: SeenOptions,
+}
+
+#[derive(Default)]
+struct SeenOptions {
     root_directive_seen: bool,
     secret_provider_seen: bool,
+    secret_ref_seen: bool,
 }
 
 impl Default for CliState {
@@ -232,8 +241,7 @@ impl Default for CliState {
             overall_ok: true,
             current_files: Vec::new(),
             mode: CommandMode::FileActions,
-            root_directive_seen: false,
-            secret_provider_seen: false,
+            seen: SeenOptions::default(),
         }
     }
 }
@@ -305,6 +313,18 @@ fn parse_one_arg(args: &[String], i: &mut usize, state: &mut CliState) -> Result
             };
             state.options.secret_provider = parse_secret_provider(provider)?;
         }
+        unknown if unknown.starts_with("--secret-ref=") => {
+            note_secret_ref(state)?;
+            let Some((_, reference)) = unknown.split_once('=') else {
+                return Err("--secret-ref requires --secret-ref=REF syntax".to_string());
+            };
+            state.options.secret_ref = if reference.is_empty() {
+                None
+            } else {
+                Some(reference.to_string())
+            };
+        }
+        "--secret-ref" => return Err("use --secret-ref=REF".to_string()),
         unknown if unknown.starts_with("--root-dir=") => {
             note_root_directive(state)?;
             let Some((_, root)) = unknown.split_once('=') else {
@@ -336,10 +356,18 @@ fn parse_one_arg(args: &[String], i: &mut usize, state: &mut CliState) -> Result
 }
 
 fn note_secret_provider(state: &mut CliState) -> Result<(), String> {
-    if state.secret_provider_seen {
+    if state.seen.secret_provider_seen {
         return Err(SECRET_PROVIDER_MORE_THAN_ONCE.to_string());
     }
-    state.secret_provider_seen = true;
+    state.seen.secret_provider_seen = true;
+    Ok(())
+}
+
+fn note_secret_ref(state: &mut CliState) -> Result<(), String> {
+    if state.seen.secret_ref_seen {
+        return Err(SECRET_REF_MORE_THAN_ONCE.to_string());
+    }
+    state.seen.secret_ref_seen = true;
     Ok(())
 }
 
@@ -355,10 +383,10 @@ fn parse_secret_provider(value: &str) -> Result<SecretProvider, String> {
 }
 
 fn note_root_directive(state: &mut CliState) -> Result<(), String> {
-    if state.root_directive_seen {
+    if state.seen.root_directive_seen {
         return Err(ROOT_SPECIFIED_MORE_THAN_ONCE.to_string());
     }
-    state.root_directive_seen = true;
+    state.seen.root_directive_seen = true;
     Ok(())
 }
 
@@ -615,6 +643,9 @@ fn read_config_file(path: &Path) -> Result<EffectiveConfig, String> {
             }
             "secret_provider" => {
                 args.push(format!("--secret-provider={}", config_string(name, value)?));
+            }
+            "secret_ref" => {
+                args.push(format!("--secret-ref={}", config_string(name, value)?));
             }
             "silent" => {
                 if config_bool(name, value)? {

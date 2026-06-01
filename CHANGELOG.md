@@ -1,6 +1,7 @@
 ## 0.9.1
 
 - Updated `--help` to document TOML configuration, supported config keys, current environment variable support, and authorization footnotes.
+- Added `--secret-ref=REF` parsing and TOML `secret_ref` support for provider-specific secret references.
 - Reworked `README.md` to remove stale fixed-version references and describe the current security model, configuration flow, Auth password recovery, root directives, secret providers, and test workflow.
 - Added clarifying source comments around configuration layering, read-only checks, authorization cache integrity, root-relative path identity, and recovery/burner encryption.
 
