@@ -10,7 +10,10 @@ function Report_error() {
 
 function Record-seed() {
   local VERBOSE=0
-  if [[ "$1" == '--verbose' ]]; then VERBOSE=1; fi
+  if [[ "$1" == '--verbose' ]]; then
+    VERBOSE=1
+    shift
+  fi
   local SEED="$1" TYPE="$2" SAVE_FILE="$3"
   if [[ ${VERBOSE} == 1 ]]; then
     printf "[1;96mInfo:[0m Seed %s %s\n" "${SEED}" "${TYPE}" >/dev/tty
@@ -41,10 +44,10 @@ Synopsis
 --------
 
 ```bash
-randlist --help|-h
-randlist --version
-randlist [OPTIONS] "WORD1" "WORD2" ... $
-randlist [OPTIONS] TEXT_FILE
+shuffle --help|-h
+shuffle --version
+shuffle [OPTIONS] "WORD1" "WORD2" ... $
+shuffle [OPTIONS] TEXT_FILE
 ```
 Options
 -------
@@ -168,8 +171,8 @@ If --stdin is intermixed with the WORDs, it will interpolate at that point.
 
   if [[ ${#WORDS[@]} -eq 0 ]]; then
     echo -n "[1;91m"
-    echo "Usage: randlist [--seed=NUM] WORD1 WORD2 ..." >&2
-    echo "    or randlist --help" >&2
+    echo "Usage: shuffle [--seed=NUM] WORD1 WORD2 ..." >&2
+    echo "    or shuffle --help" >&2
     echo -n "[0m"
     return 1
   elif [[ ${#WORDS[@]} -eq 1 ]]; then
