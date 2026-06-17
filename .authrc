@@ -1,6 +1,0 @@
-version = 1
-default_root = true
-secret_provider = "1password"
-secret_ref = "op://tx512/auth-file/password"
-cache_time = 60
-color = "always"
