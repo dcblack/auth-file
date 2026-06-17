@@ -9,8 +9,12 @@ function Report_error() {
 }
 
 function Record-seed() {
+  local VERBOSE=0
+  if [[ "$1" == '--verbose' ]]; then VERBOSE=1; fi
   local SEED="$1" TYPE="$2" SAVE_FILE="$3"
-  printf "[1;96mInfo:[0m Seed %s %s\n" "${SEED}" "${TYPE}" >/dev/tty
+  if [[ ${VERBOSE} == 1 ]]; then
+    printf "[1;96mInfo:[0m Seed %s %s\n" "${SEED}" "${TYPE}" >/dev/tty
+  fi
   if [[ -n "${SAVE_FILE}" ]]; then
     if ! echo -n '# ' >"${SAVE_FILE}"; then
       Report_error "Unable to write seed file '%s'"
@@ -20,7 +24,9 @@ function Record-seed() {
       printf "# %s\n" "${TYPE}"
       printf "%s\n" "${SEED}"
     } >>"${SAVE_FILE}"
-    printf "[1;96mInfo:[0m Seed saved in '%s'\n" "${SAVE_FILE}" >/dev/tty
+    if [[ ${VERBOSE} == 1 ]]; then
+      printf "[1;96mInfo:[0m Seed saved in '%s'\n" "${SAVE_FILE}" >/dev/tty
+    fi
   fi
 }
 
@@ -43,14 +49,15 @@ randlist [OPTIONS] TEXT_FILE
 Options
 -------
 
-Option      | Description
-------      | -----------
---help      | displays this text and exits (aka -h)
---version   | displays the version and exits
---seed=NUM  | specifies the starting seed (aka -s NUM)
---seed=FILE | specifies the starting seed (aka -s NUM)
---save=FILE | specifies a file to dump the seed information into
---stdin     | allows piping the words one line at a time from stdin
+Option       | Description
+------       | -----------
+--help       | displays this text and exits (aka -h)
+--version    | displays the version and exits
+--seed=NUM   | specifies the starting seed (aka -s NUM)
+--seed=FILE  | specifies the starting seed (aka -s NUM)
+--save=FILE  | specifies a file to dump the seed information into
+--stdin      | allows piping the words one line at a time from stdin
+--verbose|-v | echoes info
 
 Notes
 -----
@@ -67,7 +74,7 @@ If --stdin is intermixed with the WORDs, it will interpolate at that point.
 
   local SEED=1 TYPE="Default seed"
   local -a WORDS=()
-  local ARG="" SAVE_FILE="" line
+  local ARG="" SAVE_FILE="" line  VERBOSE=0
 
   # Parse arguments
   while [[ $# -gt 0 ]]; do
@@ -82,6 +89,10 @@ If --stdin is intermixed with the WORDs, it will interpolate at that point.
     --version)
       echo "$0 ${VERSION}"
       return 0
+      ;;
+
+    --verbose | -v)
+      VERBOSE=1
       ;;
 
     --save=*)
@@ -175,7 +186,11 @@ If --stdin is intermixed with the WORDs, it will interpolate at that point.
     else
       echo "${WORDS[0]}"
       echo "[1;96mInfo:[0m one element" >/dev/tty
-      Record-seed "${SEED}" "${TYPE}" "${SAVE_FILE}"
+      if [[ ${VERBOSE} == 1 ]]; then
+        Record-seed --verbose "${SEED}" "${TYPE}" "${SAVE_FILE}"
+      else
+        Record-seed "${SEED}" "${TYPE}" "${SAVE_FILE}"
+      fi
       return 0
     fi
   fi
@@ -185,7 +200,11 @@ If --stdin is intermixed with the WORDs, it will interpolate at that point.
     TYPE="${TYPE} as unchanged"
     printf '%s\n' "${WORDS[@]}"
     echo "[1;96mInfo:[0m original order" >/dev/tty
-    Record-seed "${SEED}" "${TYPE}" "${SAVE_FILE}"
+    if [[ ${VERBOSE} == 1 ]]; then
+      Record-seed --verbose "${SEED}" "${TYPE}" "${SAVE_FILE}"
+    else 
+      Record-seed "${SEED}" "${TYPE}" "${SAVE_FILE}"
+    fi
     return 0
   elif [[ ${SEED} -eq 0 ]]; then
     # Use TRNG (True Random Number Generator) via /dev/urandom
@@ -210,7 +229,11 @@ If --stdin is intermixed with the WORDs, it will interpolate at that point.
 
   # Output shuffled words
   printf '%s\n' "${WORDS[@]}"
-  Record-seed "${SEED}" "${TYPE}" "${SAVE_FILE}"
+  if [[ ${VERBOSE} == 1 ]]; then
+    Record-seed --verbose "${SEED}" "${TYPE}" "${SAVE_FILE}"
+  else
+    Record-seed "${SEED}" "${TYPE}" "${SAVE_FILE}"
+  fi
 }
 
 Shuffle "$@"
