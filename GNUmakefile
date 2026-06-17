@@ -43,7 +43,7 @@ GIT_WORK_DIR   := $(shell ${GIT_EXE} rev-parse --show-toplevel)
 DEV_TOOLS      := ${GIT_WORK_DIR}/dev-tools
 ARTIFACTS      := ${GIT_WORK_DIR}/artifacts
 ARCHIVES       := ${GIT_WORK_DIR}/ARCHIVE
-ARCHIVE_NOW    := ${ARCHIVES}/auth-file-$(shell git describe --long).zip
+ARCHIVE_NOW    := ${ARCHIVES}/auth-file-$(shell git describe --dirty --long).zip
 SBOM_DIR       := ${ARTIFACTS}/sbom
 SBOM_FILE      := auth-file.dx
 SBOM_FULLPATH  := ${SBOM_DIR}/${SBOM_FILE}.json
@@ -137,6 +137,12 @@ version:
 archive:
 	${GIT_EXE} archive --format=zip HEAD > ${ARCHIVE_NOW}
 	@$(call Info,Created ${ARCHIVE_NOW})
+
+#.______________________________________________________________________________
+#| * status displays git status
+status:
+	@git status  -s -uno
+	@git describe --long --dirty
 
 #.______________________________________________________________________________
 #| * unpack VERS=#.#.# - extract version from archives
