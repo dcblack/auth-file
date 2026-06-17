@@ -76,12 +76,12 @@ TEST_PASS  = Long-Test-Password-2026!
 BAD_PASS   = Wrong-Test-Password-2026!
 FILES      = file1 file2 file3 file4 file5
 
-AUTH_ENV = AUTH_OPTIONS="-d ${AUTH_DIR}" \
+AUTH_ENV = AUTH_OPTIONS="--config= -d ${AUTH_DIR}" \
            AUTH_TEST_FALLBACK_PASSWORD="${TEST_PASS}" \
            AUTH_TEST_FALLBACK_PASSWORD_CONFIRM="${TEST_PASS}" \
            AUTH_TEST_CURRENT_PASSWORD_OR_BURNER="${TEST_PASS}"
 
-ROOT_AUTH_ENV = AUTH_OPTIONS="-d ${AUTH_DIR} --root-dir=${ROOT_DIR}" \
+ROOT_AUTH_ENV = AUTH_OPTIONS="--config= -d ${AUTH_DIR} --root-dir=${ROOT_DIR}" \
                 AUTH_TEST_FALLBACK_PASSWORD="${TEST_PASS}" \
                 AUTH_TEST_FALLBACK_PASSWORD_CONFIRM="${TEST_PASS}" \
                 AUTH_TEST_CURRENT_PASSWORD_OR_BURNER="${TEST_PASS}"
@@ -209,7 +209,7 @@ test-check-no-auth:
 	@$(call Prompt)
 	${AUTH_ENV} "${AUTH}" --request-password --write "${TEST_DIR}/file1"
 	@$(call Prompt)
-	env AUTH_OPTIONS="-d ${AUTH_DIR}" \
+	env AUTH_OPTIONS="--config= -d ${AUTH_DIR}" \
 	    "${AUTH}" --request-password --cache-time=60 --check "${TEST_DIR}/file1"
 	@$(call Passed)
 
@@ -220,7 +220,7 @@ test-cache:
 	@$(call Prompt)
 	${AUTH_ENV} "${AUTH}" --request-password --cache-time=60 --write "${TEST_DIR}/file4"
 	@$(call Prompt)
-	AUTH_OPTIONS="-d ${AUTH_DIR}" AUTH_TEST_CURRENT_PASSWORD_OR_BURNER="${BAD_PASS}" \
+	AUTH_OPTIONS="--config= -d ${AUTH_DIR}" AUTH_TEST_CURRENT_PASSWORD_OR_BURNER="${BAD_PASS}" \
 	  "${AUTH}" --request-password --write "${TEST_DIR}/file5"
 	@$(call Passed)
 
@@ -254,13 +254,13 @@ test-bad-password:
 	@$(call Prompt)
 	printf "bad password test\n" >"${TEST_DIR}/bad-password/file1"
 	@$(call Prompt)
-	env AUTH_OPTIONS="-d ${TEST_DIR}/bad-password/auth-test" \
+	env AUTH_OPTIONS="--config= -d ${TEST_DIR}/bad-password/auth-test" \
 	    AUTH_TEST_FALLBACK_PASSWORD="${TEST_PASS}" \
 	    AUTH_TEST_FALLBACK_PASSWORD_CONFIRM="${TEST_PASS}" \
 	    AUTH_TEST_CURRENT_PASSWORD_OR_BURNER="${TEST_PASS}" \
 	    "${AUTH}" --request-password --cache-time=0 --write "${TEST_DIR}/bad-password/file1"
 	@$(call Prompt)
-	if env AUTH_OPTIONS="-d ${TEST_DIR}/bad-password/auth-test" \
+	if env AUTH_OPTIONS="--config= -d ${TEST_DIR}/bad-password/auth-test" \
 	    AUTH_TEST_CURRENT_PASSWORD_OR_BURNER="${BAD_PASS}" \
 	    "${AUTH}" --request-password --cache-time=0 --write "${TEST_DIR}/bad-password/file1"; then \
 	  $(call FailedExpectation,Bad auth password returned OK!); \
@@ -296,7 +296,7 @@ test-root-dir:
 	@$(call Prompt)
 	${ROOT_AUTH_ENV} "${AUTH}" --request-password --write "${ROOT_DIR}/rel-file1"
 	@$(call Prompt)
-	AUTH_OPTIONS="-d ${AUTH_DIR} --root-dir=${COPY_ROOT}" \
+	AUTH_OPTIONS="--config= -d ${AUTH_DIR} --root-dir=${COPY_ROOT}" \
 	AUTH_TEST_CURRENT_PASSWORD_OR_BURNER="${TEST_PASS}" \
 	  "${AUTH}" --request-password --check "${COPY_ROOT}/rel-file1"
 	@$(call Passed)
@@ -324,13 +324,13 @@ test-auth-options:
 	@$(call Prompt)
 	printf "auth options rooted content\n" >"${TEST_DIR}/auth-options/root/rel-file1"
 	@$(call Prompt)
-	env AUTH_OPTIONS="-d ${TEST_DIR}/auth-options/auth-test --root-dir=${TEST_DIR}/auth-options/root" \
+	env AUTH_OPTIONS="--config= -d ${TEST_DIR}/auth-options/auth-test --root-dir=${TEST_DIR}/auth-options/root" \
 	    AUTH_TEST_FALLBACK_PASSWORD="${TEST_PASS}" \
 	    AUTH_TEST_FALLBACK_PASSWORD_CONFIRM="${TEST_PASS}" \
 	    AUTH_TEST_CURRENT_PASSWORD_OR_BURNER="${TEST_PASS}" \
 	    "${AUTH}" --request-password --write "${TEST_DIR}/auth-options/root/rel-file1"
 	@$(call Prompt)
-	env AUTH_OPTIONS="-d ${TEST_DIR}/auth-options/auth-test --root-dir=${TEST_DIR}/auth-options/root" \
+	env AUTH_OPTIONS="--config= -d ${TEST_DIR}/auth-options/auth-test --root-dir=${TEST_DIR}/auth-options/root" \
 	    "${AUTH}" --check "${TEST_DIR}/auth-options/root/rel-file1"
 	@$(call Passed)
 
@@ -365,7 +365,7 @@ test-root-directives:
 	  $(call PassedExpectation,duplicate root directives rejected); \
 	fi
 	@$(call Prompt)
-	if AUTH_OPTIONS="-d ${AUTH_DIR} --default-root" "${AUTH}" --root-dir=${ROOT_DIR} --check "${TEST_DIR}/file1"; then \
+	if AUTH_OPTIONS="--config= -d ${AUTH_DIR} --default-root" "${AUTH}" --root-dir=${ROOT_DIR} --check "${TEST_DIR}/file1"; then \
 	  $(call FailedExpectation,Expected AUTH_OPTIONS plus CLI root directive to fail); \
 	else \
 	  $(call PassedExpectation,AUTH_OPTIONS plus CLI root directive rejected); \

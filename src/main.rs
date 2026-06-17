@@ -696,7 +696,7 @@ fn extend_config_options(
     args: &mut Vec<String>,
 ) -> Result<(), String> {
     if let Some(value) = value.as_str() {
-        args.extend(split_auth_options(value)?);
+        extend_config_option_tokens(name, value, args)?;
         return Ok(());
     }
     let Some(values) = value.as_array() else {
@@ -710,8 +710,26 @@ fn extend_config_options(
                 "configuration key {name} must contain only strings"
             ));
         };
-        args.extend(split_auth_options(option)?);
+        extend_config_option_tokens(name, option, args)?;
     }
+    Ok(())
+}
+
+fn extend_config_option_tokens(
+    name: &str,
+    option_text: &str,
+    args: &mut Vec<String>,
+) -> Result<(), String> {
+    let tokens = split_auth_options(option_text)?;
+    if tokens
+        .iter()
+        .any(|token| token == "--config" || token.starts_with("--config="))
+    {
+        return Err(format!(
+            "configuration key {name} must not contain --config; choose the configuration file before loading it"
+        ));
+    }
+    args.extend(tokens);
     Ok(())
 }
 
