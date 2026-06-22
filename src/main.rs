@@ -32,6 +32,7 @@ Synopsis
   auth --change-password [OPTIONS]
   auth --show-dir [OPTIONS]
   auth --stats [OPTIONS]
+  auth --show-config [OPTIONS]
 
 Options
 -------
@@ -40,7 +41,7 @@ Options
   --change-password          Change Auth password using current password or burner[^2]
   --check, -ck               Verify specified files; read-only and does not require authorization
   --color=WHEN               Color output: auto, always, never [default: auto]
-  --config=FILE              Read TOML configuration from FILE [default: ~/.authrc]
+  --config=FILE              Read TOML configuration from FILE [default: ~/.auth.toml]
   --config=                  Disable configuration loading for this invocation
   --default-root             Use default full-path file identity
   --dir=DIR, -d DIR          Specify database directory [default: ~/.auth]
@@ -52,6 +53,7 @@ Options
   --root-dir=PATH            Store/check paths relative to this canonical root
   --secret-provider=PROVIDER Secret provider: prompt, env, os-keyring, 1password, bitwarden
   --secret-ref=REF          Provider-specific secret reference, such as op://VAULT/ITEM/FIELD
+  --show-config              Display effective configuration after authorization[^2]
   --show-dir                 Display auth storage paths[^2]
   --silent, -s               Silent even with failure, useful in scripts
   --stats                    Display database statistics[^2]
@@ -72,24 +74,25 @@ Configuration
     2. AUTH_OPTIONS environment variable
     3. command-line arguments
 
-  The default config path is ~/.authrc. Use --config=FILE to select another file.
+  The default config path is ~/.auth.toml. Use --config=FILE to select another file.
   Use --config= to disable config loading. This is useful when authorizing or
   repairing the config file itself.
 
   Example TOML:
 
-    options = [
-      "--default-root",
-      "--secret-provider=1password",
-    ]
-    dir = "/Users/me/.auth"
-    color = "auto"
+    version = 1
+    default_root = true
     cache_time = 60
-    request_password = false
+    color = "always"
+    secret_provider = "1password"
+    secret_ref = "op://VAULT/ITEM/FIELD"
+
+    # Escape hatch for options without first-class TOML keys:
+    options = ["--verbose"]
 
   Supported structured TOML keys:
 
-    options, AUTH_OPTIONS, cache_time, color, default_root, dir, db_dir,
+    version, options, AUTH_OPTIONS, cache_time, color, default_root, dir, db_dir,
     force, quiet, request_password, root_dir, secret_provider, secret_ref, silent, verbose
 
   Supported config/environment variables:
@@ -126,8 +129,8 @@ Secret Providers
     1password, 1p, 1pw
     bitwarden, bw
 
-  Current 1Password support uses op read op://Private/<name>/password for the
-  internal secret name requested by auth.
+  1Password support reads the configured secret reference using `op read REF`.
+  Example: --secret-ref="op://Private/auth-file/password"
 
 Compatibility
 -------------
@@ -159,12 +162,13 @@ enum CommandMode {
     ChangePassword,
     ShowDir,
     Stats,
+    ShowConfig,
 }
 
 const ROOT_SPECIFIED_MORE_THAN_ONCE: &str = "Attempt to specify root directory more than once.";
 const SECRET_PROVIDER_MORE_THAN_ONCE: &str = "Attempt to specify secret provider more than once.";
 const SECRET_REF_MORE_THAN_ONCE: &str = "Attempt to specify secret reference more than once.";
-const DEFAULT_CONFIG_FILE: &str = ".authrc";
+const DEFAULT_CONFIG_FILE: &str = ".auth.toml";
 const DISABLE_CONFIG_ENV: &str = "AUTH_CONFIG_DISABLE";
 
 fn main() -> ExitCode {
@@ -184,11 +188,11 @@ fn main() -> ExitCode {
 }
 
 fn run() -> Result<bool, String> {
-    let args = collect_args()?;
-    if handle_top_level_command(&args) {
+    let prepared = collect_args()?;
+    if handle_top_level_command(&prepared.args) {
         return Ok(true);
     }
-    execute_args(&args)
+    execute_args(&prepared.args, prepared.config_info)
 }
 
 fn print_version() {
@@ -224,6 +228,7 @@ struct CliState {
     current_files: Vec<String>,
     mode: CommandMode,
     seen: SeenOptions,
+    config_info: ConfigInfo,
 }
 
 #[derive(Default)]
@@ -242,12 +247,16 @@ impl Default for CliState {
             current_files: Vec::new(),
             mode: CommandMode::FileActions,
             seen: SeenOptions::default(),
+            config_info: ConfigInfo::default(),
         }
     }
 }
 
-fn execute_args(args: &[String]) -> Result<bool, String> {
-    let mut state = CliState::default();
+fn execute_args(args: &[String], config_info: ConfigInfo) -> Result<bool, String> {
+    let mut state = CliState {
+        config_info,
+        ..CliState::default()
+    };
     let mut i = 0;
     while i < args.len() {
         parse_one_arg(args, &mut i, &mut state)?;
@@ -337,6 +346,7 @@ fn parse_one_arg(args: &[String], i: &mut usize, state: &mut CliState) -> Result
             };
         }
         "--root-dir" => return Err("use --root-dir=PATH".to_string()),
+        "--show-config" => set_mode(state, CommandMode::ShowConfig)?,
         "--show-dir" => set_mode(state, CommandMode::ShowDir)?,
         "-s" | "--silent" => state.options.verbose = -1,
         "--stats" => set_mode(state, CommandMode::Stats)?,
@@ -412,6 +422,7 @@ fn finalize_cli_state(state: &mut CliState) -> Result<bool, String> {
         CommandMode::ChangePassword => change_password(state),
         CommandMode::ShowDir => show_dir(state),
         CommandMode::Stats => show_stats(state),
+        CommandMode::ShowConfig => show_config(state),
     }
 }
 
@@ -435,6 +446,86 @@ fn show_dir(state: &CliState) -> Result<bool, String> {
     println!("Auth directory: {}", paths.auth_dir.display());
     println!("Database: {}", paths.database.display());
     Ok(true)
+}
+
+fn show_config(state: &CliState) -> Result<bool, String> {
+    reject_file_operands(state, "--show-config")?;
+
+    // Showing the effective configuration reveals security-sensitive details
+    // such as the auth database path and secret-provider reference, so it uses
+    // the same protected path as --show-dir and --stats.
+    let paths = auth_storage_paths(&state.options).map_err(|e| e.to_string())?;
+
+    println!("Configuration:");
+    match (&state.config_info.source, &state.config_info.path) {
+        (ConfigSource::Disabled, _) => println!("  file: disabled (--config=)"),
+        (_, Some(path)) => {
+            println!("  file: {}", path.display());
+            println!("  source: {}", state.config_info.source.label());
+            println!(
+                "  loaded: {}",
+                if state.config_info.loaded {
+                    "yes"
+                } else {
+                    "no"
+                }
+            );
+        }
+        (_, None) => println!("  file: none"),
+    }
+
+    println!();
+    println!("Effective settings:");
+    println!("  auth_dir: {}", paths.auth_dir.display());
+    println!("  database: {}", paths.database.display());
+    println!("  cache_time: {}", state.options.cache_seconds);
+    println!("  color: {}", color_mode_name(state.options.color));
+    println!(
+        "  authorization: {}",
+        match state.options.authorization {
+            AuthorizationMode::Platform => "platform",
+            AuthorizationMode::Password => "auth-password",
+            AuthorizationMode::None => "none",
+        }
+    );
+    println!(
+        "  root: {}",
+        state
+            .options
+            .root_dir
+            .as_ref()
+            .map_or_else(|| "default".to_string(), |path| path.display().to_string())
+    );
+    println!(
+        "  secret_provider: {}",
+        secret_provider_name(state.options.secret_provider)
+    );
+    println!(
+        "  secret_ref: {}",
+        state.options.secret_ref.as_deref().unwrap_or("(none)")
+    );
+    println!("  verbose: {}", state.options.verbose);
+    println!("  force: {}", state.options.force);
+
+    Ok(true)
+}
+
+fn color_mode_name(mode: ColorMode) -> &'static str {
+    match mode {
+        ColorMode::Auto => "auto",
+        ColorMode::Always => "always",
+        ColorMode::Never => "never",
+    }
+}
+
+fn secret_provider_name(provider: SecretProvider) -> &'static str {
+    match provider {
+        SecretProvider::Prompt => "prompt",
+        SecretProvider::Env => "env",
+        SecretProvider::OsKeyring => "os-keyring",
+        SecretProvider::OnePassword => "1password",
+        SecretProvider::Bitwarden => "bitwarden",
+    }
 }
 
 fn show_stats(state: &CliState) -> Result<bool, String> {
@@ -478,10 +569,52 @@ fn flush_current_files(state: &mut CliState) {
     }
 }
 
-fn collect_args() -> Result<Vec<String>, String> {
+#[derive(Debug, Clone)]
+struct PreparedInput {
+    args: Vec<String>,
+    config_info: ConfigInfo,
+}
+
+#[derive(Debug, Clone)]
+struct ConfigInfo {
+    source: ConfigSource,
+    path: Option<PathBuf>,
+    loaded: bool,
+}
+
+impl Default for ConfigInfo {
+    fn default() -> Self {
+        Self {
+            source: ConfigSource::Default,
+            path: default_config_path(),
+            loaded: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConfigSource {
+    Default,
+    CommandLine,
+    Environment,
+    Disabled,
+}
+
+impl ConfigSource {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Default => "default",
+            Self::CommandLine => "command line",
+            Self::Environment => "AUTH_OPTIONS",
+            Self::Disabled => "disabled",
+        }
+    }
+}
+
+fn collect_args() -> Result<PreparedInput, String> {
     // Build one argument stream in the security-relevant precedence order:
     // config file first, then AUTH_OPTIONS, then the real command line. Help and
-    // version are intentionally checked before loading config so a bad ~/.authrc
+    // version are intentionally checked before loading config so a bad ~/.auth.toml
     // cannot prevent a user from asking for usage/version information.
     let cli_args: Vec<String> = env::args().skip(1).collect();
 
@@ -489,11 +622,17 @@ fn collect_args() -> Result<Vec<String>, String> {
         .first()
         .is_some_and(|arg| arg == "--help" || arg == "-h")
     {
-        return Ok(cli_args);
+        return Ok(PreparedInput {
+            args: cli_args,
+            config_info: ConfigInfo::default(),
+        });
     }
 
     if cli_args.first().is_some_and(|arg| arg == "--version") {
-        return Ok(cli_args);
+        return Ok(PreparedInput {
+            args: cli_args,
+            config_info: ConfigInfo::default(),
+        });
     }
 
     let env_args = if let Ok(auth_options) = env::var("AUTH_OPTIONS") {
@@ -502,13 +641,13 @@ fn collect_args() -> Result<Vec<String>, String> {
         Vec::new()
     };
 
-    let config = load_config_args(&cli_args, &env_args)?;
+    let (config, config_info) = load_config_args(&cli_args, &env_args)?;
     apply_config_environment(&config.variables);
 
     let mut args = config.args;
     args.extend(env_args);
     args.extend(cli_args);
-    Ok(args)
+    Ok(PreparedInput { args, config_info })
 }
 
 struct EffectiveConfig {
@@ -530,36 +669,71 @@ impl EffectiveConfig {
     }
 }
 
-fn load_config_args(cli_args: &[String], env_args: &[String]) -> Result<EffectiveConfig, String> {
+fn load_config_args(
+    cli_args: &[String],
+    env_args: &[String],
+) -> Result<(EffectiveConfig, ConfigInfo), String> {
     if env::var_os(DISABLE_CONFIG_ENV).is_some() {
-        return Ok(EffectiveConfig::empty());
+        return Ok((
+            EffectiveConfig::empty(),
+            ConfigInfo {
+                source: ConfigSource::Disabled,
+                path: None,
+                loaded: false,
+            },
+        ));
     }
 
-    let Some(path) = config_path(cli_args, env_args) else {
-        return Ok(EffectiveConfig::empty());
+    let Some((path, source)) = config_path(cli_args, env_args) else {
+        return Ok((
+            EffectiveConfig::empty(),
+            ConfigInfo {
+                source: ConfigSource::Disabled,
+                path: None,
+                loaded: false,
+            },
+        ));
     };
 
     if !path.exists() {
         if explicit_config_requested(cli_args) || explicit_config_requested(env_args) {
             return Err(format!("configuration file not found: {}", path.display()));
         }
-        return Ok(EffectiveConfig::empty());
+        return Ok((
+            EffectiveConfig::empty(),
+            ConfigInfo {
+                source,
+                path: Some(path),
+                loaded: false,
+            },
+        ));
     }
 
-    read_config_file(&path)
+    let config = read_config_file(&path)?;
+    Ok((
+        config,
+        ConfigInfo {
+            source,
+            path: Some(path),
+            loaded: true,
+        },
+    ))
 }
 
-fn config_path(cli_args: &[String], env_args: &[String]) -> Option<PathBuf> {
+fn config_path(cli_args: &[String], env_args: &[String]) -> Option<(PathBuf, ConfigSource)> {
     if config_disabled(cli_args) {
         return None;
     }
     if let Some(path) = explicit_config_path(cli_args) {
-        return Some(path);
+        return Some((path, ConfigSource::CommandLine));
     }
     if config_disabled(env_args) {
         return None;
     }
-    explicit_config_path(env_args).or_else(default_config_path)
+    if let Some(path) = explicit_config_path(env_args) {
+        return Some((path, ConfigSource::Environment));
+    }
+    default_config_path().map(|path| (path, ConfigSource::Default))
 }
 
 fn config_disabled(args: &[String]) -> bool {
@@ -600,6 +774,7 @@ fn read_config_file(path: &Path) -> Result<EffectiveConfig, String> {
 
     for (name, value) in &table {
         match name.as_str() {
+            "version" => validate_config_version(value)?,
             "options" | "AUTH_OPTIONS" => extend_config_options(name, value, &mut args)?,
             "AUTH_TEST_FALLBACK_PASSWORD"
             | "AUTH_TEST_FALLBACK_PASSWORD_CONFIRM"
@@ -668,6 +843,17 @@ fn read_config_file(path: &Path) -> Result<EffectiveConfig, String> {
     }
 
     Ok(EffectiveConfig { args, variables })
+}
+
+fn validate_config_version(value: &toml::Value) -> Result<(), String> {
+    let Some(version) = value.as_integer() else {
+        return Err("configuration version must be an integer".to_string());
+    };
+    if version == 1 {
+        Ok(())
+    } else {
+        Err(format!("unsupported configuration version {version}"))
+    }
 }
 
 fn config_string(name: &str, value: &toml::Value) -> Result<String, String> {

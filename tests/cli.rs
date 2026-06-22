@@ -31,7 +31,9 @@ fn help_option_works() {
         .stdout(predicate::str::contains("--version"))
         .stdout(predicate::str::contains("--no-platform-auth").not())
         .stdout(predicate::str::contains("--cache-time"))
-        .stdout(predicate::str::contains("--default-root"));
+        .stdout(predicate::str::contains("--default-root"))
+        .stdout(predicate::str::contains("--show-config"))
+        .stdout(predicate::str::contains("~/.auth.toml"));
 }
 
 #[test]
@@ -193,6 +195,144 @@ fn config_file_rejects_unknown_variables() {
         .stderr(predicate::str::contains(
             "unsupported configuration key PATH",
         ));
+}
+
+#[test]
+fn config_version_one_is_accepted() {
+    let tmp = tempdir().unwrap();
+    let db = tmp.path().join("auth-test");
+    let config = tmp.path().join("auth.toml");
+    let file = tmp.path().join("versioned.txt");
+    fs::write(&file, "versioned config contents\n").unwrap();
+    fs::write(
+        &config,
+        format!(
+            "version = 1\ndir = \"{}\"\nrequest_password = true\n",
+            db.display()
+        ),
+    )
+    .unwrap();
+
+    let mut cmd = auth_cmd();
+    cmd.env_remove("AUTH_CONFIG_DISABLE")
+        .arg(format!("--config={}", config.display()))
+        .arg("--write")
+        .arg(&file)
+        .assert()
+        .success();
+}
+
+#[test]
+fn config_rejects_unsupported_version() {
+    let tmp = tempdir().unwrap();
+    let config = tmp.path().join("auth.toml");
+    fs::write(&config, "version = 999\n").unwrap();
+
+    let mut cmd = auth_cmd();
+    cmd.env_remove("AUTH_CONFIG_DISABLE")
+        .arg(format!("--config={}", config.display()))
+        .arg("--stats")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "unsupported configuration version 999",
+        ));
+}
+
+#[test]
+fn config_rejects_non_integer_version() {
+    let tmp = tempdir().unwrap();
+    let config = tmp.path().join("auth.toml");
+    fs::write(&config, "version = \"abc\"\n").unwrap();
+
+    let mut cmd = auth_cmd();
+    cmd.env_remove("AUTH_CONFIG_DISABLE")
+        .arg(format!("--config={}", config.display()))
+        .arg("--stats")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "configuration version must be an integer",
+        ));
+}
+
+#[test]
+fn show_config_displays_effective_settings() {
+    let tmp = tempdir().unwrap();
+    let db = tmp.path().join("auth-test");
+    let config = tmp.path().join("auth.toml");
+    fs::write(
+        &config,
+        format!(
+            r#"version = 1
+dir = "{}"
+default_root = true
+cache_time = 60
+color = "never"
+request_password = true
+secret_provider = "prompt"
+"#,
+            db.display()
+        ),
+    )
+    .unwrap();
+
+    let mut cmd = auth_cmd();
+    cmd.env_remove("AUTH_CONFIG_DISABLE")
+        .arg(format!("--config={}", config.display()))
+        .arg("--show-config")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Configuration:"))
+        .stdout(predicate::str::contains("Effective settings:"))
+        .stdout(predicate::str::contains("source: command line"))
+        .stdout(predicate::str::contains("cache_time: 60"))
+        .stdout(predicate::str::contains("secret_provider: prompt"));
+}
+
+#[test]
+fn default_config_file_is_auth_toml() {
+    let tmp = tempdir().unwrap();
+    let home = tmp.path().join("home");
+    let db = tmp.path().join("auth-test");
+    fs::create_dir_all(&home).unwrap();
+    fs::write(
+        home.join(".auth.toml"),
+        format!(
+            "version = 1\ndir = \"{}\"\nrequest_password = true\n",
+            db.display()
+        ),
+    )
+    .unwrap();
+
+    let mut cmd = auth_cmd();
+    cmd.env_remove("AUTH_CONFIG_DISABLE")
+        .env("HOME", &home)
+        .arg("--show-config")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(".auth.toml"))
+        .stdout(predicate::str::contains("source: default"));
+}
+
+#[test]
+fn config_equals_empty_disables_default_config() {
+    let tmp = tempdir().unwrap();
+    let home = tmp.path().join("home");
+    let db = tmp.path().join("auth-test");
+    fs::create_dir_all(&home).unwrap();
+    fs::write(home.join(".auth.toml"), "PATH = \"/tmp\"\n").unwrap();
+
+    let mut cmd = auth_cmd();
+    cmd.env_remove("AUTH_CONFIG_DISABLE")
+        .env("HOME", &home)
+        .arg("--config=")
+        .arg(format!("--dir={}", db.display()))
+        .arg("--request-password")
+        .arg("--show-config")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("disabled (--config=)"));
 }
 
 #[test]

@@ -94,6 +94,7 @@ auth --write  [OPTIONS] FILENAME...
 auth --check  [OPTIONS] FILENAME...
 auth --remove [OPTIONS] FILENAME...
 auth --change-password [OPTIONS]
+auth --show-config [OPTIONS]
 auth --show-dir [OPTIONS]
 auth --stats [OPTIONS]
 ```
@@ -106,7 +107,7 @@ auth --check important-script.sh
 auth --remove important-script.sh
 ```
 
-`--check` does not require authorization. Protected commands such as `--write`, `--remove`, `--change-password`, `--show-dir`, and `--stats` require platform authorization, an Auth password, or a valid authorization cache depending on the selected options and platform.
+`--check` does not require authorization. Protected commands such as `--write`, `--remove`, `--change-password`, `--show-config`, `--show-dir`, and `--stats` require platform authorization, an Auth password, or a valid authorization cache depending on the selected options and platform.
 
 ## Configuration
 
@@ -121,7 +122,7 @@ Later layers are appended after earlier layers, but duplicate-sensitive options 
 By default, `auth` looks for:
 
 ```text
-~/.authrc
+~/.auth.toml
 ```
 
 Use a different config file:
@@ -133,32 +134,43 @@ auth --config=/path/to/auth.toml --check file.txt
 Disable config loading for one command:
 
 ```bash
-auth --config= --write ~/.authrc
+auth --config= --write ~/.auth.toml
 ```
 
 That is useful when authorizing or repairing the config file itself. `AUTH_CONFIG_DISABLE=1` is also still supported for tests and emergency troubleshooting, but `--config=` is the preferred user-facing spelling.
+ 
+Display the selected configuration file and effective settings after authorization:
+
+```bash
+auth --request-password --show-config
+```
+
+Because effective configuration can reveal database locations and secret-provider references, `--show-config` is a protected command.
 
 ### TOML config format
 
 Example:
 
 ```toml
-# ~/.authrc
-options = [
-  "--default-root",
-  "--secret-provider=1password",
-]
+# ~/.auth.toml
+version = 1
 
-dir = "/Users/me/.auth"
-color = "auto"
+default_root = true
 cache_time = 60
-request_password = false
+color = "always"
+
+secret_provider = "1password"
+secret_ref = "op://VAULT/ITEM/FIELD"
+
+# Escape hatch for options without first-class TOML keys:
+options = ["--verbose"]
 ```
 
 Supported structured keys:
 
 | Key | Type | Meaning |
 |---|---|---|
+| `version` | integer | Configuration format version; currently must be `1` |
 | `options` or `AUTH_OPTIONS` | string or array of strings | Extra auth options parsed before environment and command-line options |
 | `cache_time` | integer | Authorization cache duration, 0 to 120 seconds |
 | `color` | string | `auto`, `always`, or `never` |
@@ -169,6 +181,7 @@ Supported structured keys:
 | `request_password` | boolean | Prefer Auth password / burner authorization |
 | `root_dir` | string | Use root-relative file identity |
 | `secret_provider` | string | `prompt`, `env`, `os-keyring`, `1password`, or `bitwarden` |
+| `secret_ref` | string | Provider-specific secret reference, such as `op://VAULT/ITEM/FIELD` |
 | `silent` | boolean | Suppress routine output |
 | `verbose` | boolean or integer | Increase verbosity; negative integer selects silent |
 
@@ -221,13 +234,20 @@ Supported provider names and aliases:
 | `1password` | `1p`, `1pw` |
 | `bitwarden` | `bw` |
 
-Current 1Password support reads provider secrets with the 1Password CLI using:
+1Password support reads the configured secret reference with the 1Password CLI:
 
-```text
-op://Private/<name>/password
+```bash
+op read "op://VAULT/ITEM/FIELD"
 ```
 
-where `<name>` is the internal secret name requested by `auth`.
+Recommended configuration:
+
+```toml
+secret_provider = "1password"
+secret_ref = "op://Private/auth-file/password"
+```
+
+Vault, item, and field names are user-defined in 1Password. `auth` does not try to infer them.
 
 ## Authorization cache
 

@@ -1,3 +1,10 @@
+## 0.9.2
+
+- Changed the default configuration file to `~/.auth.toml`.
+- Accepted and validated `version = 1` as TOML configuration metadata.
+- Added authorized `--show-config` output showing the selected config source and effective settings.
+- Updated README/help configuration examples for structured TOML and `secret_ref`.
+
 ## 0.9.1
 
 - Updated `--help` to document TOML configuration, supported config keys, current environment variable support, and authorization footnotes.
@@ -36,6 +43,13 @@
 - Added provider parsing tests.
 
 # Changelog
+
+## 0.9.2
+
+- Change default config file to `~/.auth.toml`.
+- Accept and validate `version = 1` in TOML config.
+- Add authorized `--show-config` with effective settings output.
+
 
 All notable changes to this project will be documented in this file.
 
