@@ -1,6 +1,6 @@
 # auth-file / `auth`
 
-`auth` is a small command-line tool and Rust library for authorizing and validating files before scripts or automation use them.
+`auth` is a small cross-platfom (macOS, Linux, Windows 11) command-line tool and Rust library for authorizing and validating files before scripts or automation use them.
 
 The published crate name is `auth-file`; the installed binary is `auth`.
 
