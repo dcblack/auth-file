@@ -4,8 +4,8 @@
 #![warn(clippy::pedantic)]
 
 use authlib::{
-    auth_report, auth_stats, auth_storage_paths, change_fallback_password, ActionType, AuthOptions,
-    AuthorizationMode, ColorMode, SecretProvider, VERSION,
+    auth_report, auth_stats, auth_storage_paths, change_fallback_password, set_runtime_env_default,
+    ActionType, AuthOptions, AuthorizationMode, ColorMode, SecretProvider, VERSION,
 };
 use std::env;
 use std::io::{self, IsTerminal, Write};
@@ -921,9 +921,7 @@ fn extend_config_option_tokens(
 
 fn apply_config_environment(variables: &[(String, String)]) {
     for (name, value) in variables {
-        if env::var_os(name).is_none() {
-            env::set_var(name, value);
-        }
+        set_runtime_env_default(name, value);
     }
 }
 

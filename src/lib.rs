@@ -26,7 +26,7 @@ use chacha20poly1305::aead::{Aead, KeyInit};
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use hmac::{Hmac, Mac};
-use keyring_core::Entry;
+use keyring::Entry;
 use rand_core::{OsRng, RngCore};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -34,7 +34,7 @@ use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::{self, IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::{OnceLock, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 
@@ -42,6 +42,39 @@ type HmacSha256 = Hmac<Sha256>;
 type EncryptedKeyBundleParts = (Vec<u8>, Vec<u8>, Vec<u8>);
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+fn runtime_environment() -> &'static RwLock<Vec<(String, String)>> {
+    static RUNTIME_ENVIRONMENT: OnceLock<RwLock<Vec<(String, String)>>> = OnceLock::new();
+    RUNTIME_ENVIRONMENT.get_or_init(|| RwLock::new(Vec::new()))
+}
+
+pub fn set_runtime_env_default(name: &str, value: &str) {
+    if std::env::var_os(name).is_some() {
+        return;
+    }
+
+    let Ok(mut variables) = runtime_environment().write() else {
+        return;
+    };
+
+    if variables.iter().any(|(existing, _)| existing == name) {
+        return;
+    }
+
+    variables.push((name.to_string(), value.to_string()));
+}
+
+fn runtime_env_var(name: &str) -> Option<String> {
+    std::env::var(name).ok().or_else(|| {
+        runtime_environment().read().ok().and_then(|variables| {
+            variables
+                .iter()
+                .find(|(existing, _)| existing == name)
+                .map(|(_, value)| value.clone())
+        })
+    })
+}
+
 const TEST_KEYPAIR_FILE: &str = "ed25519.signing-key";
 const TEST_PATH_KEY_FILE: &str = "path-hmac.key";
 const PUBKEY_FILE: &str = "ed25519.verifying-key";
@@ -1438,9 +1471,9 @@ fn test_new_passwords(db_dir: &Path) -> Option<(String, String)> {
     if !is_test_database_dir(db_dir) {
         return None;
     }
-    let password = std::env::var("AUTH_TEST_FALLBACK_PASSWORD").ok()?;
+    let password = runtime_env_var("AUTH_TEST_FALLBACK_PASSWORD")?;
     let confirm =
-        std::env::var("AUTH_TEST_FALLBACK_PASSWORD_CONFIRM").unwrap_or_else(|_| password.clone());
+        runtime_env_var("AUTH_TEST_FALLBACK_PASSWORD_CONFIRM").unwrap_or_else(|| password.clone());
     Some((password, confirm))
 }
 
@@ -1448,9 +1481,8 @@ fn test_existing_password(db_dir: &Path) -> Option<String> {
     if !is_test_database_dir(db_dir) {
         return None;
     }
-    std::env::var("AUTH_TEST_CURRENT_PASSWORD_OR_BURNER")
-        .or_else(|_| std::env::var("AUTH_TEST_FALLBACK_PASSWORD"))
-        .ok()
+    runtime_env_var("AUTH_TEST_CURRENT_PASSWORD_OR_BURNER")
+        .or_else(|| runtime_env_var("AUTH_TEST_FALLBACK_PASSWORD"))
 }
 
 fn test_existing_or_burner_password(db_dir: &Path) -> Option<String> {
@@ -1765,17 +1797,7 @@ fn get_or_create_secret(
 }
 
 fn keyring_entry(name: &str) -> Result<Entry, AuthError> {
-    ensure_keyring_store()?;
     Entry::new(KEYRING_SERVICE, name).map_err(|e| AuthError::KeyStorage(e.to_string()))
-}
-
-fn ensure_keyring_store() -> Result<(), AuthError> {
-    static KEYRING_STORE: OnceLock<Result<(), String>> = OnceLock::new();
-    KEYRING_STORE
-        .get_or_init(|| keyring::use_native_store(false).map_err(|e| e.to_string()))
-        .as_ref()
-        .map_err(|e| AuthError::KeyStorage(e.clone()))
-        .copied()
 }
 
 fn key_namespace(db_dir: &Path) -> String {
@@ -2005,7 +2027,7 @@ pub fn platform_authorize(reason: &str) -> Result<(), AuthError> {
 }
 
 mod platform {
-    use super::AuthError;
+    use super::{runtime_env_var, AuthError};
 
     #[cfg(target_os = "macos")]
     pub fn authorize(reason: &str) -> Result<(), AuthError> {
@@ -2019,7 +2041,7 @@ mod platform {
         //   2. helper compiled by build.rs into OUT_DIR
         //   3. helper installed beside the auth executable
         //   4. helper on PATH
-        let helper = std::env::var_os("AUTH_MACOS_TOUCHID_HELPER")
+        let helper = runtime_env_var("AUTH_MACOS_TOUCHID_HELPER")
             .map(PathBuf::from)
             .or_else(|| {
                 let built = env!("AUTH_BUILT_MACOS_HELPER");
