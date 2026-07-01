@@ -2027,10 +2027,11 @@ pub fn platform_authorize(reason: &str) -> Result<(), AuthError> {
 }
 
 mod platform {
-    use super::{runtime_env_var, AuthError};
+    use super::AuthError;
 
     #[cfg(target_os = "macos")]
     pub fn authorize(reason: &str) -> Result<(), AuthError> {
+        use super::runtime_env_var;
         use std::path::PathBuf;
         use std::process::Command;
 
