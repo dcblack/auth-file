@@ -307,12 +307,43 @@ fn default_config_file_is_auth_toml() {
 
     let mut cmd = auth_cmd();
     cmd.env_remove("AUTH_CONFIG_DISABLE")
-        .env("HOME", &home)
+        .env("AUTH_TEST_HOME", &home)
         .arg("--show-config")
         .assert()
         .success()
         .stdout(predicate::str::contains(".auth.toml"))
         .stdout(predicate::str::contains("source: default"));
+}
+
+#[test]
+fn home_env_does_not_redirect_default_config() {
+    let tmp = tempdir().unwrap();
+    let fake_home = tmp.path().join("fake-home");
+    let test_home = tmp.path().join("test-home");
+    let db = tmp.path().join("auth-test");
+    fs::create_dir_all(&fake_home).unwrap();
+    fs::create_dir_all(&test_home).unwrap();
+    fs::write(fake_home.join(".auth.toml"), "PATH = \"/tmp\"\n").unwrap();
+    fs::write(
+        test_home.join(".auth.toml"),
+        format!(
+            "version = 1\ndir = \"{}\"\nrequest_password = true\n",
+            db.display()
+        ),
+    )
+    .unwrap();
+
+    let mut cmd = auth_cmd();
+    cmd.env_remove("AUTH_CONFIG_DISABLE")
+        .env("HOME", &fake_home)
+        .env("AUTH_TEST_HOME", &test_home)
+        .arg("--show-config")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("source: default"))
+        .stdout(predicate::str::contains(
+            test_home.join(".auth.toml").to_string_lossy().as_ref(),
+        ));
 }
 
 #[test]
@@ -325,7 +356,7 @@ fn config_equals_empty_disables_default_config() {
 
     let mut cmd = auth_cmd();
     cmd.env_remove("AUTH_CONFIG_DISABLE")
-        .env("HOME", &home)
+        .env("AUTH_TEST_HOME", &home)
         .arg("--config=")
         .arg(format!("--dir={}", db.display()))
         .arg("--request-password")

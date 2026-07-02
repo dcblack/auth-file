@@ -75,6 +75,81 @@ fn runtime_env_var(name: &str) -> Option<String> {
     })
 }
 
+/// Return the account home directory used for security-sensitive defaults.
+///
+/// On Unix-like platforms, this deliberately avoids the `HOME` environment
+/// variable for normal execution. A script can rewrite `HOME`, so using it for
+/// the default trust store would let an attacker redirect `~/.auth` and
+/// `~/.auth.toml` to attacker-controlled locations. Tests can still isolate
+/// the home directory with `AUTH_TEST_HOME`; that override is honored only for
+/// debug/test builds.
+#[must_use]
+pub fn trusted_home_dir() -> Option<PathBuf> {
+    test_home_dir().or_else(platform_home_dir)
+}
+
+fn test_home_dir() -> Option<PathBuf> {
+    if !cfg!(debug_assertions) {
+        return None;
+    }
+    runtime_env_var("AUTH_TEST_HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+}
+
+#[cfg(target_os = "macos")]
+fn platform_home_dir() -> Option<PathBuf> {
+    let username = command_stdout("id", &["-un"])?;
+    let record = command_stdout(
+        "dscl",
+        &[
+            ".",
+            "-read",
+            &format!("/Users/{username}"),
+            "NFSHomeDirectory",
+        ],
+    )?;
+    record
+        .split_whitespace()
+        .last()
+        .filter(|home| !home.is_empty())
+        .map(PathBuf::from)
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn platform_home_dir() -> Option<PathBuf> {
+    let uid = command_stdout("id", &["-u"])?;
+    let record = command_stdout("getent", &["passwd", &uid])?;
+    record.split(':').nth(5).map(PathBuf::from)
+}
+
+#[cfg(windows)]
+fn platform_home_dir() -> Option<PathBuf> {
+    // Windows hardening is currently limited by the available safe APIs in this
+    // crate. Keep the lookup centralized so a future Win32 known-folder backend
+    // can replace this without touching the rest of the code.
+    dirs::home_dir()
+}
+
+#[cfg(not(any(unix, windows)))]
+fn platform_home_dir() -> Option<PathBuf> {
+    dirs::home_dir()
+}
+
+#[cfg(unix)]
+fn command_stdout(program: &str, args: &[&str]) -> Option<String> {
+    let output = std::process::Command::new(program)
+        .args(args)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8(output.stdout).ok()?;
+    let trimmed = text.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
 const TEST_KEYPAIR_FILE: &str = "ed25519.signing-key";
 const TEST_PATH_KEY_FILE: &str = "path-hmac.key";
 const PUBKEY_FILE: &str = "ed25519.verifying-key";
@@ -2011,7 +2086,7 @@ fn unix_now() -> u64 {
 }
 
 fn default_db_dir() -> PathBuf {
-    dirs::home_dir()
+    trusted_home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".auth")
 }

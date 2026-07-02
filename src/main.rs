@@ -5,7 +5,8 @@
 
 use authlib::{
     auth_report, auth_stats, auth_storage_paths, change_fallback_password, set_runtime_env_default,
-    ActionType, AuthOptions, AuthorizationMode, ColorMode, SecretProvider, VERSION,
+    trusted_home_dir, ActionType, AuthOptions, AuthorizationMode, ColorMode, SecretProvider,
+    VERSION,
 };
 use std::env;
 use std::io::{self, IsTerminal, Write};
@@ -103,6 +104,7 @@ Configuration
     AUTH_TEST_CURRENT_PASSWORD_OR_BURNER
     AUTH_MACOS_TOUCHID_HELPER
     AUTH_CONFIG_DISABLE
+    AUTH_TEST_HOME
     NO_COLOR, NOCOLOR
     PAGER
 
@@ -753,7 +755,7 @@ fn explicit_config_requested(args: &[String]) -> bool {
 }
 
 fn default_config_path() -> Option<PathBuf> {
-    dirs::home_dir().map(|home| home.join(DEFAULT_CONFIG_FILE))
+    trusted_home_dir().map(|home| home.join(DEFAULT_CONFIG_FILE))
 }
 
 fn read_config_file(path: &Path) -> Result<EffectiveConfig, String> {

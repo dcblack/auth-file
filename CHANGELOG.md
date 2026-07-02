@@ -1,3 +1,10 @@
+## 0.9.3
+
+- Hardened default home-directory lookup so Unix/macOS defaults no longer trust the `HOME` environment variable.
+- Added debug/test-only `AUTH_TEST_HOME` support for isolated CLI tests without touching a developer's real home directory.
+- Fixed the native Windows Hello build path for `windows` crate 0.62 by using `IAsyncOperation::join()`.
+- Added CLI regression coverage for default config isolation when `HOME` is redirected.
+
 ## 0.9.2
 
 - Changed the default configuration file to `~/.auth.toml`.
