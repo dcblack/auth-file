@@ -27,7 +27,7 @@
 #| | ------                   | -------
 
 # Dependencies
-SHELL = /bin/bash
+SHELL = $(firstword $(wildcard /bin/bash /usr/bin/bash))
 GIT_EXE  = $(shell command -v git)
 GREP_EXE  = $(firstword $(shell command -v ggrep) $(shell command -v grep))
 TOP_MAKEFILE := $(realpath $(lastword $(MAKEFILE_LIST)))
@@ -52,6 +52,9 @@ AUDIT_FULLPATH := ${AUDIT_DIR}/audit.txt
 AUTH_DEV       := ${GIT_WORK_DIR}/target/debug/auth
 AUTH_RELEASE   := ${GIT_WORK_DIR}/target/release/auth
 TEST_LIST := $(shell ${DEV_TOOLS}/shuffle --save=${ARTIFACTS}/seed.txt --seed=${SEED} $(filter test-%,$(shell perl -lane 'print $$1 if m{^([a-zA-Z][-a-zA-Z0-9_]*):[^=]*$$};' ${TESTS})))
+TOOLS_VERSIONS := tools-versions.txt
+TOOLS_CURRENT  := ${ARTIFACTS}/${TOOLS_VERSIONS}
+TOOLS_BLESSED  := ${GIT_WORK_DIR}/${TOOLS_VERSIONS}
 
 ifdef VERS
   ifeq ($(words ${VERS}),0)
@@ -119,6 +122,8 @@ VARS :=$(sort \
   ROOT_AUTH_ENV \
   TEST_LIST \
   TESTS \
+  TOOLS_CURRENT \
+  TOOLS_BLESSED \
   TOP_MAKEFILE \
   VERS \
 )
@@ -126,6 +131,29 @@ VARS :=$(sort \
 vars:
 	@$(call Info,Internal make variables)
 	@$(call Vars,${VARS})
+
+#.______________________________________________________________________________
+#| * tools-current - check the current tools versions against blessed
+tools-current:
+	@$(call Info,Checking tool versions)
+	@date -u +"Updated: %A %Y-%m-%d %H:%M" >"${TOOLS_CURRENT}"
+	@rustup --version 2>&1 | grep ^rustup >>"${TOOLS_CURRENT}"
+	@rustc  --version 2>&1 | grep ^rustc  >>"${TOOLS_CURRENT}"
+	@cargo  --version 2>&1 | grep ^cargo  >>"${TOOLS_CURRENT}"
+	@if [[ -r "${TOOLS_BLESSED}" ]]; then \
+          diff -I '^Updated' "${TOOLS_BLESSED}" "${TOOLS_CURRENT}" \
+          && printf "[1;92mTools are blessed\n[0m" \
+          && perl -pe 's/^/| /' "${TOOLS_BLESSED}"; \
+        else \
+          printf "[1;93mWarning:[93m Not yet tools-blessed[0m\n"; \
+	  perl -pe 's/^/| /' "${TOOLS_CURRENT}" ;\
+	fi
+#.______________________________________________________________________________
+#| * tools-blessed - check the tools versions
+
+tools-blessed:
+	@mv "${TOOLS_CURRENT}" "${TOOLS_BLESSED}"
+	@$(call Info,Tools are now blessed)
 
 #.______________________________________________________________________________
 #| * version - check the version
