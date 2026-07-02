@@ -2084,7 +2084,8 @@ mod platform {
             UserConsentVerifier::RequestVerificationAsync(&HSTRING::from(reason)).map_err(|e| {
                 AuthError::AuthorizationDenied(format!("Windows Hello request failed: {e}"))
             })?;
-        let result = futures_executor::block_on(op)
+        let result = op
+            .get()
             .map_err(|e| AuthError::AuthorizationDenied(format!("Windows Hello failed: {e}")))?;
         match result {
             UserConsentVerificationResult::Verified => Ok(()),
