@@ -1,4 +1,4 @@
-#!/usr/bin/bash
+#!/usr/bin/env bash
 #
 #$Info: shuffle - Randomly shuffle a list of words using a seed. $
 # See HELP_TEXT for more information
