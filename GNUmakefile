@@ -179,6 +179,10 @@ test:
 	@$(call Finished,Test complete)
 
 #.______________________________________________________________________________
+#| * syntax - basic checks
+syntax: fmt check clippy
+
+#.______________________________________________________________________________
 #| * verify - run all tests
 verify: fmt check clippy test
 	@echo "Verification complete" > "${ARTIFACTS}/verified.txt"; \

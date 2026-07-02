@@ -2085,7 +2085,7 @@ mod platform {
                 AuthError::AuthorizationDenied(format!("Windows Hello request failed: {e}"))
             })?;
         let result = op
-            .get()
+            .join()
             .map_err(|e| AuthError::AuthorizationDenied(format!("Windows Hello failed: {e}")))?;
         match result {
             UserConsentVerificationResult::Verified => Ok(()),

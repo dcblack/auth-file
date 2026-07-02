@@ -276,7 +276,6 @@ dependencies = [
  "chacha20poly1305",
  "dirs",
  "ed25519-dalek",
- "futures-executor",
  "hmac",
  "keyring",
  "predicates",
