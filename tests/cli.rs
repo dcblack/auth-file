@@ -21,6 +21,10 @@ fn auth_cmd() -> Command {
     cmd
 }
 
+fn toml_literal(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
+
 #[test]
 fn help_option_works() {
     let mut cmd = auth_cmd();
@@ -155,8 +159,8 @@ color = "never"
 request_password = true
 secret_provider = "prompt"
 "#,
-            db.display(),
-            root.display()
+            toml_literal(&db.display().to_string()),
+            toml_literal(&root.display().to_string())
         ),
     )
     .unwrap();
@@ -164,7 +168,10 @@ secret_provider = "prompt"
     let mut write = auth_cmd();
     write
         .env_remove("AUTH_CONFIG_DISABLE")
-        .arg(format!("--config={}", config.display()))
+        .arg(format!(
+            "--config={}",
+            toml_literal(&config.display().to_string())
+        ))
         .arg("--write")
         .arg(&file)
         .assert()
@@ -173,7 +180,10 @@ secret_provider = "prompt"
     let mut check = auth_cmd();
     check
         .env_remove("AUTH_CONFIG_DISABLE")
-        .arg(format!("--config={}", config.display()))
+        .arg(format!(
+            "--config={}",
+            toml_literal(&config.display().to_string())
+        ))
         .arg("--check")
         .arg(&file)
         .assert()
@@ -208,7 +218,7 @@ fn config_version_one_is_accepted() {
         &config,
         format!(
             "version = 1\ndir = \"{}\"\nrequest_password = true\n",
-            db.display()
+            toml_literal(&db.display().to_string())
         ),
     )
     .unwrap();
@@ -272,14 +282,17 @@ color = "never"
 request_password = true
 secret_provider = "prompt"
 "#,
-            db.display()
+            toml_literal(&db.display().to_string())
         ),
     )
     .unwrap();
 
     let mut cmd = auth_cmd();
     cmd.env_remove("AUTH_CONFIG_DISABLE")
-        .arg(format!("--config={}", config.display()))
+        .arg(format!(
+            "--config={}",
+            toml_literal(&config.display().to_string())
+        ))
         .arg("--show-config")
         .assert()
         .success()
@@ -300,7 +313,7 @@ fn default_config_file_is_auth_toml() {
         home.join(".auth.toml"),
         format!(
             "version = 1\ndir = \"{}\"\nrequest_password = true\n",
-            db.display()
+            toml_literal(&db.display().to_string())
         ),
     )
     .unwrap();
@@ -328,7 +341,7 @@ fn home_env_does_not_redirect_default_config() {
         test_home.join(".auth.toml"),
         format!(
             "version = 1\ndir = \"{}\"\nrequest_password = true\n",
-            db.display()
+            toml_literal(&db.display().to_string())
         ),
     )
     .unwrap();
