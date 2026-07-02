@@ -133,15 +133,19 @@ vars:
 	@$(call Vars,${VARS})
 
 #.______________________________________________________________________________
-#| * tools-current - check the current tools versions against blessed
+#| * tools-current - dump current tools into artifacts
 tools-current:
-	@$(call Info,Checking tool versions)
+	@$(call Info,Pulling tool versions)
 	@date -u +"Updated: %A %Y-%m-%d %H:%M" >"${TOOLS_CURRENT}"
 	@rustup --version 2>&1 | grep ^rustup >>"${TOOLS_CURRENT}"
 	@rustc  --version 2>&1 | grep ^rustc  >>"${TOOLS_CURRENT}"
 	@cargo  --version 2>&1 | grep ^cargo  >>"${TOOLS_CURRENT}"
+#.______________________________________________________________________________
+#| * tools-check - compare the current tools versions against blessed
+tools-check: tools-current
+	@$(call Info,Comparing current against blessed tool versions)
 	@if [[ -r "${TOOLS_BLESSED}" ]]; then \
-          diff -I '^Updated' "${TOOLS_BLESSED}" "${TOOLS_CURRENT}" \
+          diff -I '^(Updated|Blessed)' "${TOOLS_BLESSED}" "${TOOLS_CURRENT}" \
           && printf "[1;92mTools are blessed\n[0m" \
           && perl -pe 's/^/| /' "${TOOLS_BLESSED}"; \
         else \
@@ -151,14 +155,15 @@ tools-current:
 #.______________________________________________________________________________
 #| * tools-blessed - check the tools versions
 
-tools-blessed:
+tools-blessed: tools-current
 	@mv "${TOOLS_CURRENT}" "${TOOLS_BLESSED}"
-	@$(call Info,Tools are now blessed)
+	@perl -pi -e 's/Updated/Blessed/' "${TOOLS_BLESSED}"
+	@$(call Info,Current tools are now blessed -- Remember to commit.)
 
 #.______________________________________________________________________________
 #| * version - check the version
 version:
-	python3 ${DEV_TOOLS}/check-version.py --show
+	python3 "${DEV_TOOLS}/check-version.py" --show
 
 #.______________________________________________________________________________
 #| * archive - create an archive to share
@@ -205,18 +210,22 @@ clippy:
 test:
 	cargo test --all-targets --all-features
 	@$(call Finished,Test complete)
+	@echo "Testing complete" >> "${ARTIFACTS}/verified.txt";
+
+verified:
+	@date -u +"Verified: %A %Y-%m-%d %H:%M" > "${ARTIFACTS}/verified.txt"; \
+	uname -a >> "${ARTIFACTS}/verified.txt"; \
+	python3 ${DEV_TOOLS}/check-version.py --show >> "${ARTIFACTS}/verified.txt"
 
 #.______________________________________________________________________________
 #| * syntax - basic checks
-syntax: fmt check clippy
+syntax: tools-check fmt check clippy
+	@echo "Syntax completed" >> "${ARTIFACTS}/verified.txt";
 
 #.______________________________________________________________________________
 #| * verify - run all tests
-verify: fmt check clippy test
-	@echo "Verification complete" > "${ARTIFACTS}/verified.txt"; \
-	date                     >> "${ARTIFACTS}/verified.txt"; \
-	uname -a                 >> "${ARTIFACTS}/verified.txt"; \
-	python3 ${DEV_TOOLS}/check-version.py --show >> "${ARTIFACTS}/verified.txt"
+verify: syntax test
+	@echo "Verification complete" >> "${ARTIFACTS}/verified.txt";
 	@$(call Finished,Verification complete)
 
 #.______________________________________________________________________________
