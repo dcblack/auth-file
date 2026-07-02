@@ -27,6 +27,7 @@
 *.kwd   text
 *.asc   text
 *.tex   diff=c++draft
+setup.profile text eol=lf
 README  text
 LICENSE text
 

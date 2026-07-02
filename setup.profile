@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/usr/bin/bash
 #
 (return 0 2>/dev/null) && SOURCED=1 || SOURCED=0
 if [[ ${SOURCED} == 0 ]]; then

@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/usr/bin/bash
 #
 #$Info: shuffle - Randomly shuffle a list of words using a seed. $
 # See HELP_TEXT for more information
@@ -8,6 +8,14 @@ function Report_error() {
   return 1
 }
 
+function File_mkdir() {
+  local FILE="$1" FDIR
+  FDIR="$(dirname "${FILE}")"
+  if [[ "${FDIR}" =~ / ]]; then
+    mkdir -p "${FDIR}"
+  fi
+}
+
 function Record-seed() {
   local VERBOSE=0
   if [[ "$1" == '--verbose' ]]; then
@@ -15,6 +23,7 @@ function Record-seed() {
     shift
   fi
   local SEED="$1" TYPE="$2" SAVE_FILE="$3"
+  File_mkdir "${SAVE_FILE}"
   if [[ ${VERBOSE} == 1 ]]; then
     printf "[1;96mInfo:[0m Seed %s %s\n" "${SEED}" "${TYPE}" >/dev/tty
   fi
