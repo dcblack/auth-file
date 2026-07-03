@@ -72,19 +72,31 @@ endif
 # Special macros to add some color
 ifdef NOCOLOR
   RED :=
+  red :=
   GRN :=
+  grn :=
   YLW :=
+  ylw :=
   BLU :=
+  blu :=
   MAG :=
+  mag :=
   CYN :=
+  cyn :=
   OFF :=
 else
   RED := [1;91m
+  red := [91m
   GRN := [1;92m
+  grn := [92m
   YLW := [1;93m
+  ylw := [93m
   BLU := [1;94m
+  blu := [94m
   MAG := [1;95m
+  mag := [95m
   CYN := [1;96m
+  cyn := [96m
   OFF := [0m
 endif
 RULER   := ------------------------------------------------------------
@@ -147,10 +159,10 @@ tools-check: tools-current
 	@$(call Info,Comparing current against blessed tool versions)
 	@if [[ -r "${TOOLS_BLESSED}" ]]; then \
           ${DIFF_EXE} --ignore-matching-lines='GMT' "${TOOLS_BLESSED}" "${TOOLS_CURRENT}" \
-          && printf "[1;92mTools are blessed\n[0m" \
+          && printf "${GRN}Tools are blessed\n${OFF}" \
           && perl -pe 's/^/| /' "${TOOLS_BLESSED}"; \
         else \
-          printf "[1;93mWarning:[93m Not yet tools-blessed[0m\n"; \
+          printf "${GRN}Warning:${grn} Not yet tools-blessed${OFF}\n"; \
 	  perl -pe 's/^/| /' "${TOOLS_CURRENT}" ;\
 	fi
 #.______________________________________________________________________________
@@ -173,13 +185,13 @@ archive:
 	@$(call Info,Created ${ARCHIVE_NOW})
 
 #.______________________________________________________________________________
-#| * status displays git status
+#| * status - displays git status
 status:
 	@git status  -s -uno
 	@git describe --long --dirty
 
 #.______________________________________________________________________________
-#| * unpack VERS=#.#.# - extract version from archives
+#| * unpack - VERS=#.#.# extract ${VERS}ion from archives
 unpack:
 	if [[ -n '${VERS}' ]]; then \
 	          python3 ${DEV_TOOLS}/check-version.py ${VERS}; \
@@ -187,6 +199,12 @@ unpack:
 	        else \
 	          python3 ${DEV_TOOLS}/unpack.py "$(python3 ${DEV_TOOLS}/check-version.py)" \
 	        fi
+
+#.______________________________________________________________________________
+#| * clean - cargo clean 
+clean:
+	cargo clean
+	@$(call Finished,Cleaning)
 
 #.______________________________________________________________________________
 #| * fmt - cargo format 
@@ -230,7 +248,7 @@ verify: syntax test
 	@$(call Finished,Verification complete)
 
 #.______________________________________________________________________________
-#| * upload VERS='#.#.# Note' - commit to GitHub (aka push)
+#| * upload - VERS='#.#.# Note' commit to GitHub (aka push)
 upload: verify
 	python3 ${DEV_TOOLS}/check-version.py ${VERS}
 	set -- ${VERS}; \
