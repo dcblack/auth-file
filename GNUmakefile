@@ -30,6 +30,7 @@
 SHELL = $(firstword $(wildcard /bin/bash /usr/bin/bash))
 GIT_EXE  = $(shell command -v git)
 GREP_EXE  = $(firstword $(shell command -v ggrep) $(shell command -v grep))
+DIFF_EXE  = $(firstword $(wildcard /usr/bin/diff /bin/diff))
 TOP_MAKEFILE := $(realpath $(lastword $(MAKEFILE_LIST)))
 TESTS = tests.mk # can be overridden
 SEED  = 0
@@ -136,7 +137,7 @@ vars:
 #| * tools-current - dump current tools into artifacts
 tools-current:
 	@$(call Info,Pulling tool versions)
-	@date -u +"Updated: %A %Y-%m-%d %H:%M" >"${TOOLS_CURRENT}"
+	@date -u +"Updated: %A %Y-%m-%d %H:%M GMT" >"${TOOLS_CURRENT}"
 	@rustup --version 2>&1 | grep ^rustup >>"${TOOLS_CURRENT}"
 	@rustc  --version 2>&1 | grep ^rustc  >>"${TOOLS_CURRENT}"
 	@cargo  --version 2>&1 | grep ^cargo  >>"${TOOLS_CURRENT}"
@@ -145,7 +146,7 @@ tools-current:
 tools-check: tools-current
 	@$(call Info,Comparing current against blessed tool versions)
 	@if [[ -r "${TOOLS_BLESSED}" ]]; then \
-          diff -I '^(Updated|Blessed)' "${TOOLS_BLESSED}" "${TOOLS_CURRENT}" \
+          ${DIFF_EXE} --ignore-matching-lines='^(Updated|Blessed).*' "${TOOLS_BLESSED}" "${TOOLS_CURRENT}" \
           && printf "[1;92mTools are blessed\n[0m" \
           && perl -pe 's/^/| /' "${TOOLS_BLESSED}"; \
         else \
