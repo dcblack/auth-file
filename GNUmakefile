@@ -146,7 +146,7 @@ tools-current:
 tools-check: tools-current
 	@$(call Info,Comparing current against blessed tool versions)
 	@if [[ -r "${TOOLS_BLESSED}" ]]; then \
-          ${DIFF_EXE} --ignore-matching-lines='^(Updated|Blessed).*' "${TOOLS_BLESSED}" "${TOOLS_CURRENT}" \
+          ${DIFF_EXE} --ignore-matching-lines='GMT' "${TOOLS_BLESSED}" "${TOOLS_CURRENT}" \
           && printf "[1;92mTools are blessed\n[0m" \
           && perl -pe 's/^/| /' "${TOOLS_BLESSED}"; \
         else \
