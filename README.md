@@ -69,7 +69,9 @@ Decrypt it with `rage`, then save the burner passwords somewhere durable, prefer
 
 ```bash
 cargo install rage
-rage -d ~/.auth/auth-burners.age > auth-burners.txt
+rage -d ~/.auth/auth-burners.age \
+| op item create --vault="private" --category="Login" \
+  --title="Auth" burners=stdin   
 ```
 
 If you forget the Auth password, this encrypted burner file will not help because it is protected by that same Auth password.
