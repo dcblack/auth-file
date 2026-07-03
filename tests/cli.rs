@@ -152,8 +152,8 @@ fn config_file_accepts_structured_toml_options() {
         &config,
         format!(
             r#"
-dir = "{}"
-root_dir = "{}"
+dir = {}
+root_dir = {}
 cache_time = 60
 color = "never"
 request_password = true
@@ -168,10 +168,7 @@ secret_provider = "prompt"
     let mut write = auth_cmd();
     write
         .env_remove("AUTH_CONFIG_DISABLE")
-        .arg(format!(
-            "--config={}",
-            toml_literal(&config.display().to_string())
-        ))
+        .arg(format!("--config={}", config.display()))
         .arg("--write")
         .arg(&file)
         .assert()
@@ -180,10 +177,7 @@ secret_provider = "prompt"
     let mut check = auth_cmd();
     check
         .env_remove("AUTH_CONFIG_DISABLE")
-        .arg(format!(
-            "--config={}",
-            toml_literal(&config.display().to_string())
-        ))
+        .arg(format!("--config={}", config.display()))
         .arg("--check")
         .arg(&file)
         .assert()
@@ -217,7 +211,7 @@ fn config_version_one_is_accepted() {
     fs::write(
         &config,
         format!(
-            "version = 1\ndir = \"{}\"\nrequest_password = true\n",
+            "version = 1\ndir = {}\nrequest_password = true\n",
             toml_literal(&db.display().to_string())
         ),
     )
@@ -275,7 +269,7 @@ fn show_config_displays_effective_settings() {
         &config,
         format!(
             r#"version = 1
-dir = "{}"
+dir = {}
 default_root = true
 cache_time = 60
 color = "never"
@@ -289,10 +283,7 @@ secret_provider = "prompt"
 
     let mut cmd = auth_cmd();
     cmd.env_remove("AUTH_CONFIG_DISABLE")
-        .arg(format!(
-            "--config={}",
-            toml_literal(&config.display().to_string())
-        ))
+        .arg(format!("--config={}", config.display()))
         .arg("--show-config")
         .assert()
         .success()
@@ -312,7 +303,7 @@ fn default_config_file_is_auth_toml() {
     fs::write(
         home.join(".auth.toml"),
         format!(
-            "version = 1\ndir = \"{}\"\nrequest_password = true\n",
+            "version = 1\ndir = {}\nrequest_password = true\n",
             toml_literal(&db.display().to_string())
         ),
     )
@@ -340,7 +331,7 @@ fn home_env_does_not_redirect_default_config() {
     fs::write(
         test_home.join(".auth.toml"),
         format!(
-            "version = 1\ndir = \"{}\"\nrequest_password = true\n",
+            "version = 1\ndir = {}\nrequest_password = true\n",
             toml_literal(&db.display().to_string())
         ),
     )
