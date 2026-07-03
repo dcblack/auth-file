@@ -136,7 +136,7 @@ vars:
 #.______________________________________________________________________________
 #| * tools-current - dump current tools into artifacts
 tools-current:
-	@$(call Info,Pulling tool versions)
+	@$(call Info,Dumping tool versions to ${TOOLS_CURRENT})
 	@date -u +"Updated: %A %Y-%m-%d %H:%M GMT" >"${TOOLS_CURRENT}"
 	@rustup --version 2>&1 | grep ^rustup >>"${TOOLS_CURRENT}"
 	@rustc  --version 2>&1 | grep ^rustc  >>"${TOOLS_CURRENT}"
