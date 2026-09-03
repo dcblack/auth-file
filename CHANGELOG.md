@@ -1,5 +1,8 @@
 ## 0.9.3
 
+- Removed the vulnerable `git2` build dependency from `shadow-rs` and updated `keyring`/`event-listener` to releases that address reported unsoundness advisories.
+- Updated `age` to 0.12.1 to remove the future-incompatibility warning from the transitive `proc-macro-error2` dependency.
+- Fixed macOS installation so the Touch ID helper is installed beside `auth` and remains available after the binary is copied.
 - Hardened default home-directory lookup so Unix/macOS defaults no longer trust the `HOME` environment variable.
 - Added debug/test-only `AUTH_TEST_HOME` support for isolated CLI tests without touching a developer's real home directory.
 - Fixed the native Windows Hello build path for `windows` crate 0.62 by using `IAsyncOperation::join()`.

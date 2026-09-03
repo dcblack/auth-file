@@ -301,7 +301,7 @@ pub fn auth_report(
 cargo build --release
 ```
 
-On macOS, `build.rs` compiles `platform/macos/auth-macos-touchid.swift` into Cargo's `OUT_DIR` and embeds that helper path into the Rust binary. Runtime lookup order is:
+On macOS, `build.rs` compiles `platform/macos/auth-macos-touchid.swift` into Cargo's `OUT_DIR`, copies it beside the Cargo-built executable, and embeds the build-time helper path into the Rust binary. The `make install` target copies that adjacent helper beside the installed `auth` executable. Runtime lookup order is:
 
 1. `AUTH_MACOS_TOUCHID_HELPER`
 2. helper compiled by `build.rs`

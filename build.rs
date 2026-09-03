@@ -42,6 +42,18 @@ fn main() {
 
     match status {
         Ok(status) if status.success() => {
+            // Keep a copy beside the Cargo-produced executable as well. The
+            // OUT_DIR copy is useful during development, but it is not part
+            // of an installed release and may disappear when the binary is
+            // copied to another machine.
+            let profile_dir = out_dir
+                .parent()
+                .and_then(Path::parent)
+                .and_then(Path::parent)
+                .expect("Cargo OUT_DIR has a profile directory");
+            let installed_helper = profile_dir.join("auth-macos-touchid");
+            std::fs::copy(&helper, &installed_helper)
+                .expect("could not copy macOS authorization helper beside binary");
             println!(
                 "cargo:rustc-env=AUTH_BUILT_MACOS_HELPER={}",
                 helper.display()

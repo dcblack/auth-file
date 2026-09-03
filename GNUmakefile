@@ -46,12 +46,11 @@ ARTIFACTS      := ${GIT_WORK_DIR}/artifacts
 ARCHIVES       := ${GIT_WORK_DIR}/ARCHIVE
 ARCHIVE_NOW    := ${ARCHIVES}/auth-file-$(shell git describe --dirty --long).zip
 SBOM_DIR       := ${GIT_WORK_DIR}/sbom
-SBOM_FILE      := auth-file.dx
-SBOM_FULLPATH  := ${SBOM_DIR}/${SBOM_FILE}.json
 AUDIT_DIR      := ${ARTIFACTS}/audit
 AUDIT_FULLPATH := ${AUDIT_DIR}/audit.txt
 AUTH_DEV       := ${GIT_WORK_DIR}/target/debug/auth
 AUTH_RELEASE   := ${GIT_WORK_DIR}/target/release/auth
+AUTH_MACOS_HELPER_RELEASE := ${GIT_WORK_DIR}/target/release/auth-macos-touchid
 TEST_LIST := $(shell ${DEV_TOOLS}/shuffle --save=${ARTIFACTS}/seed.txt --seed=${SEED} $(filter test-%,$(shell perl -lane 'print $$1 if m{^([a-zA-Z][-a-zA-Z0-9_]*):[^=]*$$};' ${TESTS})))
 TOOLS_VERSIONS := tools-versions.txt
 TOOLS_CURRENT  := ${ARTIFACTS}/${TOOLS_VERSIONS}
@@ -68,6 +67,17 @@ ifdef VERS
     endif
   endif
 endif
+
+ifneq (${VERS},)
+TARGET_VERS    := $(firstword ${VERS})
+TARGET_HASH    := $(shell git rev-parse -q "v${TARGET_VERS}^0" 2>/dev/null)
+ifeq ($(strip ${TARGET_HASH}),)
+  $(warning Missing tag matching VERS=${VERS})
+endif
+TARGET_TAGS    := $(shell git tag --points-at ${TARGET_HASH})
+endif
+SBOM_FILE      := auth-file${TARGET_VERS}.dx
+SBOM_FULLPATH  := ${SBOM_DIR}/${SBOM_FILE}.json
 
 # Special macros to add some color
 ifdef NOCOLOR
@@ -304,6 +314,7 @@ sbom:
 install: ${AUTH_RELEASE}
 	mkdir -p "${HOME}/bin"
 	rsync -av "${AUTH_RELEASE}" "${HOME}/bin/"
+	@if [[ "$$(uname -s)" == "Darwin" && -x "${AUTH_MACOS_HELPER_RELEASE}" ]]; then rsync -av "${AUTH_MACOS_HELPER_RELEASE}" "${HOME}/bin/"; fi
 	@$(call Installed,auth is now installed as ${AUTH_RELEASE})
 
 ifneq ("$(wildcard ${TESTS})","")

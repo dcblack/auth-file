@@ -7,7 +7,7 @@ if [[ ${SOURCED} == 0 ]]; then
 fi
 
 #$Info: Sets up environment. $
-export ACTION ENTRY_DIR GIT_WORK_DIR PROJECT_NAME PROJECT_DIR SETUP_PATH
+export ENTRY_DIR GIT_WORK_DIR PROJECT_NAME PROJECT_DIR SETUP_PATH PATH
 
 # NOTES
 # - PROJECT_NAME and SETUP_PATH are for debug purposes.
@@ -27,18 +27,25 @@ function Header()
   else
     while [[ "$1" =~ ^- ]]; do shift; done
     local text
-    text="$(tr '[:lower:]' '[:upper:]' <<<"$*")"
+    text="$(tr '[:lower:]' '[:upper:]' <<<"$*")" #>>>
     printf "[1;96m%s[0m\n" "${text}"
   fi
 }
 
 function Project_setup()
 {
-  export ACTION SETUP_PATH ENTRY_DIR
+  export ACTION ENTRY_DIR SETUP_PATH
+  if [[ -n "$2" ]]; then ACTION="$2"; fi
   ENTRY_DIR="$(pwd)"
+
+  # Color support
+  #
+  # shellcheck disable=SC2034
+  local RED="[91m" BLU="[92m" YLW="[93m" GRN="[94m" MAG="[95m" CYN="[96m" WHT="[97m" BLD="[m" OFF="[0m" 
 
   case "${ACTION}" in
     add|repeat)
+
       if git rev-parse --show-toplevel 1>/dev/null 2>&1; then
         # shellcheck disable=SC2034
         GIT_WORK_DIR="$(git rev-parse --show-toplevel)"
@@ -46,9 +53,14 @@ function Project_setup()
         GIT_WORK_DIR=""
       fi
       PROJECT_DIR="$(dirname "${SETUP_PATH}")"
+      if command -v find 1>/dev/null 2>&1; then
+        PROJECT_BIN="$(find "${PROJECT_DIR}" -maxdepth 2 -type "d" -name "bin")"
+      else
+        PROJECT_BIN="$(Realpath bin)"
+      fi
       PROJECT_NAME="$(basename "${PROJECT_DIR}")"
-      export GIT_WORK_DIR PROJECT_NAME PROJECT_DIR ENTRY_DIR
-      Prepend_path PATH "${PROJECT_DIR}/dev-tools"
+      export ENTRY_DIR GIT_WORK_DIR PROJECT_DIR PROJECT_NAME
+      Prepend_path PATH "${PROJECT_BIN}"
       Unique_path PATH
       if [[ -n "${GIT_WORK_DIR}" ]]; then
         Header -uc -Color -hbar=- "${GIT_WORK_DIR/*\/}"
@@ -56,13 +68,14 @@ function Project_setup()
         Header -uc -Color -hbar=- "${ENTRY_DIR/*\/}"
       fi
       Report_info -ylw "${ENTRY_DIR}"
-      echo "$1: ${PROJECT_NAME} environment set up"
+      echo "${BLD}${CYN}PROJECT_BIN=${OFF}'${YLW}${PROJECT_BIN}${OFF}'"
+      echo "${BLD}${WHT}$1:${OFF} ${PROJECT_NAME} environment set up"
       ;;
     rm|-rm|--rm)
       unset GIT_WORK_DIR
       PROJECT_NAME="$(basename "${PROJECT_DIR}")"
-      Remove_path PATH "${PROJECT_DIR}/dev-tools"
-      echo "$1: ${PROJECT_NAME} environment removed"
+      Remove_path PATH "${PROJECT_BIN}"
+      echo "${BLD}${CYN}$1: ${PROJECT_NAME} environment removed${OFF}"
       ;;
     *)
       ;;

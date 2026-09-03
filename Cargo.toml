@@ -33,11 +33,11 @@ rusqlite = { version = "0.40", features = ["bundled"] }
 sha2 = "0.10"
 thiserror = "2"
 dirs = "6"
-keyring = "4"
+keyring = "4.2"
 rpassword = "7.4"
 chacha20poly1305 = "0.10"
 argon2 = "0.5"
-age = "0.11.3"
+age = "0.12.1"
 shadow-rs = { version = "2", default-features = false }
 toml = "1"
 
@@ -50,4 +50,4 @@ predicates = "3.1"
 tempfile = "3.27"
 
 [build-dependencies]
-shadow-rs = "2"
+shadow-rs = { version = "2", default-features = false, features = ["build"] }
