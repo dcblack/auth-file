@@ -31,17 +31,21 @@ SHELL = $(firstword $(wildcard /bin/bash /usr/bin/bash))
 GIT_EXE  = $(shell command -v git)
 GREP_EXE  = $(firstword $(shell command -v ggrep) $(shell command -v grep))
 DIFF_EXE  = $(firstword $(wildcard /usr/bin/diff /bin/diff))
-TOP_MAKEFILE := $(realpath $(lastword $(MAKEFILE_LIST)))
+MAKEFILE_TOP := $(realpath $(lastword $(MAKEFILE_LIST)))
+MAKEFILE_DIR := $(dir ${MAKEFILE_TOP})
 TESTS = tests.mk # can be overridden
 SEED  = 0
-PHONIES := $(sort $(shell perl -lane 'print $$1 if m{^([a-zA-Z][-a-zA-Z0-9_]*):[^=]*$$};' ${TOP_MAKEFILE} ${TESTS}))
+PHONIES := $(sort $(shell perl -lane 'print $$1 if m{^([a-zA-Z][-a-zA-Z0-9_]*):[^=]*$$};' ${MAKEFILE_TOP} ${TESTS}))
 
 .PHONY: $(PHONIES)
 
 .DEFAULT_GOAL := help
 
 GIT_WORK_DIR   := $(shell ${GIT_EXE} rev-parse --show-toplevel)
-DEV_TOOLS      := ${GIT_WORK_DIR}/dev-tools
+ifndef PROJECT_BIN
+PROJECT_BIN    := $(firstword $(wildcard ${MAKEFILE_DIR}/*/bin ${GIT_WORK_DIR}/*/bin))
+endif
+SHUFFLE_EXE    := ${PROJECT_BIN}/shuffle
 ARTIFACTS      := ${GIT_WORK_DIR}/artifacts
 ARCHIVES       := ${GIT_WORK_DIR}/ARCHIVE
 ARCHIVE_NOW    := ${ARCHIVES}/auth-file-$(shell git describe --dirty --long).zip
@@ -51,7 +55,9 @@ AUDIT_FULLPATH := ${AUDIT_DIR}/audit.txt
 AUTH_DEV       := ${GIT_WORK_DIR}/target/debug/auth
 AUTH_RELEASE   := ${GIT_WORK_DIR}/target/release/auth
 AUTH_MACOS_HELPER_RELEASE := ${GIT_WORK_DIR}/target/release/auth-macos-touchid
-TEST_LIST := $(shell ${DEV_TOOLS}/shuffle --save=${ARTIFACTS}/seed.txt --seed=${SEED} $(filter test-%,$(shell perl -lane 'print $$1 if m{^([a-zA-Z][-a-zA-Z0-9_]*):[^=]*$$};' ${TESTS})))
+ifneq (${TESTS},) 
+TEST_LIST := $(shell ${SHUFFLE_EXE} --save=${ARTIFACTS}/seed.txt --seed=${SEED} $(filter test-%,$(shell perl -lane 'print $$1 if m{^([a-zA-Z][-a-zA-Z0-9_]*):[^=]*$$};' ${TESTS})))
+endif
 TOOLS_VERSIONS := tools-versions.txt
 TOOLS_CURRENT  := ${ARTIFACTS}/${TOOLS_VERSIONS}
 TOOLS_BLESSED  := ${GIT_WORK_DIR}/${TOOLS_VERSIONS}
@@ -127,7 +133,7 @@ endef
 #      #> represents the end of documentation
 #      A special call to the Test macro also goes to targets if in the TESTS makefile if it exists.
 help: # default target
-	@python3 ${DEV_TOOLS}/make-help.py ${TOP_MAKEFILE} ${TESTS}
+	@python3 ${PROJECT_BIN}/make-help.py ${MAKEFILE_TOP} ${TESTS}
 
 #.______________________________________________________________________________
 #| * vars - display make vars of interest
@@ -138,16 +144,16 @@ VARS :=$(sort \
   AUTH_DEV \
   AUTH_ENV \
   AUTH_RELEASE \
-  DEV_TOOLS \
   GIT_WORK_DIR \
+  MAKEFILE_TOP \
   PHONIES \
+  PROJECT_BIN \
   RESULTS \
   ROOT_AUTH_ENV \
   TEST_LIST \
   TESTS \
   TOOLS_CURRENT \
   TOOLS_BLESSED \
-  TOP_MAKEFILE \
   VERS \
 )
 
@@ -186,7 +192,7 @@ tools-blessed: tools-current
 #.______________________________________________________________________________
 #| * version - check the version
 version:
-	python3 "${DEV_TOOLS}/check-version.py" --show
+	python3 "${PROJECT_BIN}/check-version.py" --show
 
 #.______________________________________________________________________________
 #| * archive - create an archive to share
@@ -204,10 +210,10 @@ status:
 #| * unpack - VERS=#.#.# extract ${VERS}ion from archives
 unpack:
 	if [[ -n '${VERS}' ]]; then \
-	          python3 ${DEV_TOOLS}/check-version.py ${VERS}; \
-	          python3 ${DEV_TOOLS}/unpack.py "$(python3 ${DEV_TOOLS}/check-version.py ${VERS})"; \
+	          python3 ${PROJECT_BIN}/check-version.py ${VERS}; \
+	          python3 ${PROJECT_BIN}/unpack.py "$(python3 ${PROJECT_BIN}/check-version.py ${VERS})"; \
 	        else \
-	          python3 ${DEV_TOOLS}/unpack.py "$(python3 ${DEV_TOOLS}/check-version.py)" \
+	          python3 ${PROJECT_BIN}/unpack.py "$(python3 ${PROJECT_BIN}/check-version.py)" \
 	        fi
 
 #.______________________________________________________________________________
@@ -244,7 +250,7 @@ test:
 verified:
 	@date -u +"Verified: %A %Y-%m-%d %H:%M" > "${ARTIFACTS}/verified.txt"; \
 	uname -a >> "${ARTIFACTS}/verified.txt"; \
-	python3 ${DEV_TOOLS}/check-version.py --show >> "${ARTIFACTS}/verified.txt"
+	python3 ${PROJECT_BIN}/check-version.py --show >> "${ARTIFACTS}/verified.txt"
 
 #.______________________________________________________________________________
 #| * syntax - basic checks
@@ -260,7 +266,7 @@ verify: syntax test
 #.______________________________________________________________________________
 #| * upload - VERS='#.#.# Note' commit to GitHub (aka push)
 upload: verify
-	python3 ${DEV_TOOLS}/check-version.py ${VERS}
+	python3 ${PROJECT_BIN}/check-version.py ${VERS}
 	set -- ${VERS}; \
         if [[ $$# == 1 ]]; then \
           ${GIT_EXE} commit -a; \
