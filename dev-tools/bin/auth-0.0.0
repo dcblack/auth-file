@@ -1,0 +1,195 @@
+#!/bin/bash
+
+if ! builtin command -V Realpath 1>/dev/null; then
+  if builtin command -V "realpath" 1>/dev/null; then
+    # Faster version in Linux
+    function Realpath ()
+    {
+      if [[ $# == 0 ]]; then set - .; fi
+      realpath -q "$@"
+    }
+  else
+    function Realpath ()
+    {
+      if [[ $# == 0 ]]; then set - .; fi
+      /usr/bin/perl '-MCwd(abs_path)' -le '$p=abs_path(join(q( ),@ARGV));print $p if -e $p' "$*"
+    }
+  fi
+fi
+if ! builtin command -V Report_error 1>/dev/null; then
+  function Report_error()
+  {
+    export ERRORS NOCOLOR
+    if [[ -z "${ERRORS}" ]]; then ERRORS=0; fi
+    (( ++ERRORS ))
+    local text="$*" red="" RED="" NONE=""
+    if [[ ${NOCOLOR} != 1 ]]; then
+      red="91m" RED="[91;1m" NONE="[0m"
+    fi
+    printf "%sError:%s %s %s\n" "${RED}" "${red}" "${text}" "${NONE}"
+    return 1
+  }
+  function Report_warning()
+  {
+    export NOCOLOR
+    local text="$*" ylw="" YLW="" NONE=""
+    if [[ ${NOCOLOR} != 1 ]]; then
+      ylw="93m" YLW="[93;1m" NONE="[0m"
+    fi
+    printf "%sWarning:%s %s %s\n" "${YLW}" "${ylw}" "${text}" "${NONE}"
+  }
+  function Report_info()
+  {
+    export NOCOLOR
+    local text="$*" grn="" GRN="" NONE=""
+    if [[ ${NOCOLOR} != 1 ]]; then
+      grn="92m" GRN="[92;1m" NONE="[0m"
+    fi
+    printf "%sInfo:%s %s %s\n" "${GRN}" "${grn}" "${text}" "${NONE}"
+  }
+fi
+
+(return 0 2>/dev/null) && SOURCED=1 || SOURCED=0
+if [[ ${SOURCED} == 0 ]]; then
+  Report_error "Please source $0 file"
+fi
+
+function Auth() {
+  export ERRORS
+  ERRORS=0
+  local ACTION='check' # other actions: 'write' & 'remove' require authorization
+  local VERBOSITY=0 # 0: report failure, 1: report success, -1: silence
+  local FAIL=0 BOLD="[1m"
+  while [[ "$1" =~ ^- ]]; do
+    case "$1" in
+      -h | --help) printf "%s\n" '
+Name
+----
+
+  Auth - set or check authorization for a file
+
+Synopsis
+--------
+
+```bash
+  Auth --help
+  Auth --write  [OPTIONS] FILENAME(S)
+  Auth --check  [OPTIONS] FILENAME(S)
+  Auth --remove [OPTIONS] FILENAME(S)
+
+```
+
+| Option    | Abbrev | Description                                         |
+| --------- | ------ | --------------------------------------------------- |
+| --help    | -h     | Display this text                                   |
+| --dir DIR | -d DIR | Specify the directory to save authorization codes   |
+| --check   | -ck    | Verify specified files are valid                    |
+| --write   | -wr    | Authorize files following - requires security check |
+| --remove  | -rm    | Remove authorization - requires security check      |
+| --verbose | -v     | Increase verbosity                                  |
+| --quiet   | -q     | Decrease verbosity                                  |
+| --silent  | -s     | Silent even with failure (useful in scripts)        |
+| --force   | -f     | No confirmations required                           |
+
+Note: Options may also show up between filenames, allowing a mix of actions in one go. Exception --help must be first.
+
+'
+        ;;
+      -ck | --check  ) ACTION='check' ;;
+      -wr | --write  ) ACTION='write' ;;
+      -rm | --remove ) ACTION='remove' ;;
+      -v  | --verbose) VERBOSITY=1 ;;
+      -q  | --quiet  ) VERBOSITY=0 ;;
+      -s  | --silent ) VERBOSITY=-1 ;;
+      -f  | --force  ) FORCE=1 ;;
+      -d  | --dir    )
+        if [[ $# -lt 3 ]]; then
+          Report_error "Please specify a directory for '$1'"
+          return 1
+        fi
+        SD="$(realpath "$2")"
+        if [[ ! -d "${SD}" ]]; then
+          Report_error "'$2' is not a directory"
+          return 1
+        fi
+        shift
+        continue
+        ;;
+      *) Report_error "Unknown option '$1'" ;;
+    esac
+    shift
+  done
+  if [[ ${ERRORS} != 0 ]]; then return 1; fi
+  local ORIG SF SD="${HOME}/.signed"
+  if [[ ! -d "${SD}" ]]; then
+    mkdir -p "${SD}"
+  fi
+  while [[ $# != 0 ]]; do
+    case "$1" in
+      -wr | --write       ) ACTION='write';  shift; continue ;;
+      -ck | --check       ) ACTION='check';  shift; continue ;;
+      -rm | --remove      ) ACTION='remove'  shift; continue ;;
+      -v  | --verbose     ) VERBOSITY=1  shift; continue ;;
+      -q  | --quiet       ) VERBOSITY=0  shift; continue ;;
+      -s  | --silent      ) VERBOSITY=-1 shift; continue ;;
+      -f  | --force       ) FORCE=1;     shift; continue ;;
+      -d  | --dir )
+        if [[ $# -lt 3 ]]; then
+          Report_error "Please specify a directory for '$1'"
+          return 1
+        fi
+        SD="$(realpath "$2")"
+        if [[ ! -d "${SD}" ]]; then
+          Report_error "'$2' is not a directory"
+          return 1
+        fi
+        shift
+        continue
+        ;;
+      *) ;;
+    esac
+    ORIG="$(realpath "$1")"
+    if [[ ! -r "${ORIG}" ]]; then
+      Report_warning "Unable to read $1 - skipping"
+      FAIL=1
+    fi
+    SF="${SD}/$(git hash-object "${ORIG}")"
+    if [[ ${ACTION} == 'write' ]]; then
+      # TODO - security check
+      gpg -abo "${SF}" "${ORIG}" 1>/dev/null 2>&1
+    elif [[ ${ACTION} == 'remove' ]]; then
+      # TODO - security check
+      # TODO - if !FORCE, ask user to confirm (all|yes|No). No is default
+      #        * all means set FORCE=1
+      #        * Go to next file if not confirmed to allow further processing.
+      # TODO - does ${SF} exist? If not, issue a warning that ${ORIG} was not authorized.
+      # Is file present
+      if [[ ! -r "${SF}" ]]; then
+        Report_error "Signature for ${ORIG} does not exist"
+        FAIL=1
+        continue
+      fi
+      rm "${SF}"
+    elif [[ ${ACTION} == 'check' ]]; then
+      # Is file present
+      if [[ ! -r "${SF}" ]]; then
+        Report_error "Signature for ${ORIG} does not exist"
+        FAIL=1
+        continue
+      fi
+      # Verify signature
+      if gpg --verify "${SF}" "${ORIG}" 1>/dev/null 2>&1; then
+        if [[ ${VERBOSITY} == 1 ]]; then
+          Report_info "${SF} passes"
+        fi
+      else
+        if [[ ${VERBOSITY} -ge 0 ]]; then
+          Report_error "${ORIG} ${BOLD}fails"
+        fi
+        FAIL=1
+      fi
+    fi
+    shift
+  done
+  return "${FAIL}"
+}

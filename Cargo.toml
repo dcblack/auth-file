@@ -1,6 +1,6 @@
 [package]
 name = "auth-file"
-version = "0.9.3"
+version = "0.9.4" # Updated rust imports
 edition = "2021"
 authors = ["David Black <dcblack@mac.com>"]
 rust-version = "1.95.0"

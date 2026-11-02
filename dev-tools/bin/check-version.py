@@ -43,7 +43,7 @@ If comparison passed, display the full formatted version with two possibilites. 
 """.strip("\n")
 
 VERSION_RE = re.compile(r"^\d+(?:[-.]\d+){0,2}(?:\+[a-zA-Z0-9]+)?$")
-TAG_RE = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
+TAG_RE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
 NAME_RE = re.compile(r'^name\s*=\s*"([^"]+)"')
 PACKAGE_VERSION_RE = re.compile(r'^version\s*=\s*"([^"]+)"')
 BIN_SECTION_RE = re.compile(r"^\[\[bin\]\]$")
@@ -116,7 +116,7 @@ def parse_cargo_metadata(cargo_toml: Path) -> tuple[str, str]:
 
 
 def find_current_tag_version(repo_root: Path) -> tuple[int, int, int]:
-    """Return the numerically largest `vMAJOR.MINOR.PATCH` git tag.
+    """Return the numerically largest `MAJOR.MINOR.PATCH` git tag.
 
     The shell version used a plain lexical sort. This Python version sorts the
     numeric triples directly so versions behave consistently across platforms.

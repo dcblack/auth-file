@@ -1,5 +1,5 @@
-#!/usr/bin/bash
-#
+#!/usr/bin/env bash
+
 (return 0 2>/dev/null) && SOURCED=1 || SOURCED=0
 if [[ ${SOURCED} == 0 ]]; then
   echo "Don't run $0, source it" >&2
@@ -34,6 +34,7 @@ function Header()
 
 function Project_setup()
 {
+  # @brief does the real work of setup
   export ACTION ENTRY_DIR SETUP_PATH
   if [[ -n "$2" ]]; then ACTION="$2"; fi
   ENTRY_DIR="$(pwd)"
